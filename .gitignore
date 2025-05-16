@@ -1,0 +1,11 @@
+# Ignore data folder
+/data/
+
+# Ignore results
+/Results/
+
+# Ignore Python cache
+__pycache__/
+/models/**/__pycache__/
+
+/models/trained_models/
