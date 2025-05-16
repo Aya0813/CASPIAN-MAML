@@ -29,9 +29,17 @@ from utilsSFAD import artae_score, delta_score, acc0   # <- already in your repo
 # ──────────────────────────────────────────────────────────────────────────────
 #  Paths / constants
 # ──────────────────────────────────────────────────────────────────────────────
+# PATCH_SIZE       = 256
+# MODEL_WEIGHTS    = "./models/trained_models/MAML_CASPIAN_patch/final_maml_weights_256.h5"
+# EVAL_DATASET     = "C:/NYUAD/CASPIAN/AregSF/data/FSL_MAML_AD_test_ds_split_1"
+
+
+# above code is the original - bellow just for initial testing 
 PATCH_SIZE       = 256
-MODEL_WEIGHTS    = "./models/trained_models/MAML_CASPIAN_patch/final_maml_weights_256.h5"
-EVAL_DATASET     = "C:/NYUAD/CASPIAN/AregSF/data/FSL_MAML_AD_test_ds_split_1"
+MODEL_WEIGHTS    = "./models/trained_models/MAML_CASPIAN_patch_FT_SF_10epoch-test-final-step/final_maml_ft_sf.h5"
+EVAL_DATASET     = "./data/FSL_MAML_AD_test_ds_split_1"
+
+### 
 
 SAVE_PRED_DIR       = "./Results/MAML/Predictions"
 SAVE_EXPL_IMG_DIR   = "./Results/MAML/Explainability"

@@ -11,21 +11,39 @@ import re
 from datetime import datetime
 import time
 
+# added for resizing 
+import cv2
+
 # Import your CASPIAN model
 from models import CASPIANv2_MAML as new_models
 
 ################################################################################
 #                              MAML HYPERPARAMS
 ################################################################################
-PATCH_SIZE = 256        # dimension of each patch: 64x64
-SUPPORT_PATCHES = 20    # how many patches in the support set
-QUERY_PATCHES   = 20    # how many patches in the query set
-INNER_STEPS = 10        # steps in the MAML inner loop
-INNER_LR = 0.00085      # learning rate for inner loop
-OUTER_LR = 0.000085     # learning rate for outer loop
-META_BATCH_SIZE = 10    # how many tasks (scenarios) in each meta-batch
-EPOCHS = 200            # how many outer-loop epochs
-STEPS_PER_EPOCH = 100   # how many meta-batches per epoch
+# PATCH_SIZE = 256        # dimension of each patch: 64x64
+# SUPPORT_PATCHES = 20    # how many patches in the support set (the number of patches we get from the original)
+# QUERY_PATCHES   = 20    # how many patches in the query set
+# INNER_STEPS = 10        # steps in the MAML inner loop
+# INNER_LR = 0.00085      # learning rate for inner loop
+# OUTER_LR = 0.000085     # learning rate for outer loop
+# META_BATCH_SIZE = 10    # how many tasks (scenarios) in each meta-batch
+# EPOCHS = 200            # how many outer-loop epochs
+# STEPS_PER_EPOCH = 100   # how many meta-batches per epoch
+
+
+
+###### for quick testnig of the code 
+PATCH_SIZE = 64             # keep as-is unless you want to change model structure [ ??? confused - confirm whether originally set to 256 or 64 cause in all the rest of the code it seems to be set to 64 ? ]
+SUPPORT_PATCHES = 20        # ↓ from 20 → speeds up inner loop 
+QUERY_PATCHES = 20          # ↓ from 20 → speeds up outer loop eval
+INNER_STEPS = 10            # ↓ from 10 → greatly reduces computation per task
+INNER_LR = 0.00085          # same
+OUTER_LR = 0.000085         # same
+META_BATCH_SIZE = 10        # ↓ from 10 → fewer tasks per meta-update
+EPOCHS = 200                # ↓ from 200 → enough to see basic progress
+STEPS_PER_EPOCH = 100       # ↓ from 100 → quick per-epoch loop
+
+########
 
 MODEL_NAME = "MAML_CASPIAN_patch"
 SAVE_DIR = f"./models/trained_models/{MODEL_NAME}"
@@ -59,14 +77,14 @@ def clear_ds(f, x, y, yf):
       - Determine if it's SF or AD by checking filename length
       - Return the full (x,y,mask,slr)
     """
-    f_str = f.numpy().decode('UTF-8')
-    slr_val = 1.0
-    match = re.search(r'_(\d+(\.\d+)?)m', f_str)
-    if match:
+    f_str = f.numpy().decode('UTF-8')               # Converts the filename f into a regular Python string.
+    slr_val = 1.0                                   # Initializes slr_val to a default value of 1.0 in case parsing fails.
+    match = re.search(r'_(\d+(\.\d+)?)m', f_str)    # Searches the filename for a pattern like _1.5m to extract the sea level rise value.
+    if match:                                       # If a match is found, extracts the number (e.g., 1.5) and converts it to a float 
         slr_val = float(match.group(1))
 
     # Identify region
-    if len(f_str.split('_')[0]) == 30:
+    if len(f_str.split('_')[0]) == 30: # if 30 OLUs -> SF (if not AD)
         region_mask = sf_mask
     else:
         region_mask = ad_mask
@@ -79,7 +97,7 @@ def clear_ds(f, x, y, yf):
 def map_fn(f, x, y, yf):
     """
     For each dataset element = one scenario,
-    we parse the big 1024x1024 arrays + region mask + slr.
+    we parse the big 1024x1024 arrays + region mask + slr. 
     """
     x, y, region_mask, slr_val = tf.py_function(
         clear_ds, inp=[f, x, y, yf], Tout=(tf.float32, tf.float32, tf.bool, tf.float32)
@@ -95,7 +113,7 @@ def load_tf_dataset(ds_path):
     """
     raw_ds = tf.data.experimental.load(ds_path)
     ds = raw_ds.map(lambda f, x, y, yf: map_fn(f, x, y, yf))
-    return ds
+    return ds 
 
 
 ################################################################################
@@ -108,7 +126,7 @@ def sample_support_and_query_patches(x_big, y_big, region_mask, slr_val,
                                      query_count=4):
     """
     - x_big, y_big:  (1024,1024,1) from the scenario
-    - region_mask:   (1024,1024) bool
+    - region_mask:   (1024,1024) bool -> The word bool refers to the data type of the region_mask tensor. It means each value in the 1024×1024 grid is either: True (include this pixel in training) OR False (ignore this pixel — it's not part of the region of interest)
     - slr_val:       float for the entire scenario
     - patch_size:    e.g. 64
     - support_count, query_count: number of patches for support/query sets
@@ -120,7 +138,7 @@ def sample_support_and_query_patches(x_big, y_big, region_mask, slr_val,
       slr_val  : same float
     """
     # Convert to numpy for random sampling
-    x_np = x_big.numpy()
+    x_np = x_big.numpy() # converting a TensorFlow tensor (x_big, typically of type tf.Tensor) into a NumPy array.
     y_np = y_big.numpy()
     mask_np = region_mask.numpy()
 
@@ -151,7 +169,7 @@ def sample_support_and_query_patches(x_big, y_big, region_mask, slr_val,
         y_min_patch = np.full_like(y_patch_norm, y_min, dtype=np.float32)
         y_max_patch = np.full_like(y_patch_norm, y_max, dtype=np.float32)
         y_combined = np.concatenate([y_patch_norm, m_patch_expanded, y_min_patch, y_max_patch], axis=-1)
-        return x_patch, y_combined
+        return x_patch, y_combined 
 
     # sample support_count patches
     x_support_list = []
@@ -178,6 +196,93 @@ def sample_support_and_query_patches(x_big, y_big, region_mask, slr_val,
     return x_support, y_support, x_query, y_query, slr_val
 
 
+########################### MY CODE ########################### 
+
+# def sample_support_and_query_patches(x_big, y_big, region_mask, slr_val, 
+#                                      patch_size=64, 
+#                                      support_count=4, 
+#                                      query_count=4):
+#     """
+#     Modified to use full image: top half = support, bottom half = query.
+#     Returns:
+#         x_support: (1, 512, 1024, 1)
+#         y_support: (1, 512, 1024, 4)
+#         x_query:   (1, 512, 1024, 1)
+#         y_query:   (1, 512, 1024, 4)
+#         slr_val:   scalar SLR value
+#     """
+#     # Convert tensors to numpy arrays for manipulation
+#     x_np = x_big.numpy()         # input grid (1024, 1024, 1)
+#     y_np = y_big.numpy()         # target grid (1024, 1024, 1)
+#     mask_np = region_mask.numpy()  # region mask (1024, 1024), bool
+
+#     # Calculate min and max values of the target y, used for normalization
+#     y_min = float(y_np.min())
+#     y_max = float(y_np.max())
+#     eps = 1e-8  # small constant to avoid division by zero
+
+#     # Get image dimensions
+#     H, W, _ = x_np.shape
+#     mid = H // 2  # 512, used to split the image in half
+
+#     def process_half(start_row, end_row):
+#         """
+#         Process one half (either top or bottom) of the full 1024×1024 image
+#         into the shape expected by the model (256×256).
+#         """
+
+#         # Slice the half region from the full image
+#         x = x_np[start_row:end_row, :, :]       # Input grid (512, 1024, 1)
+#         y = y_np[start_row:end_row, :, :]       # Ground truth (512, 1024, 1)
+#         m = mask_np[start_row:end_row, :]       # Mask (512, 1024)
+
+#         # --- Resize all 3 inputs to (256, 256) ---
+#         # Resize input x to (256, 256) using nearest neighbor (safe for binary values)
+#         x = cv2.resize(x, (256, 256), interpolation=cv2.INTER_NEAREST)[..., None]  # (256, 256, 1)
+
+#         # Resize y to (256, 256) — flood depth labels
+#         y = cv2.resize(y, (256, 256), interpolation=cv2.INTER_NEAREST)[..., None]  # (256, 256, 1)
+
+#         # Resize mask to (256, 256), converting from bool to uint8 first
+#         m = cv2.resize(m.astype(np.uint8), (256, 256), interpolation=cv2.INTER_NEAREST)  # (256, 256)
+
+#         # --- Normalize the target y values ---
+#         y_norm = (y - y_min) / (y_max - y_min + eps)  # Normalized depth values → (256, 256, 1)
+
+#         # Expand mask dimensions and convert to float32 (so it matches model inputs)
+#         m_exp = m[..., None].astype(np.float32)  # (256, 256, 1)
+
+#         # Create full-size arrays for y_min and y_max to attach to each pixel
+#         y_min_c = np.full_like(y, y_min, dtype=np.float32)  # (256, 256, 1)
+#         y_max_c = np.full_like(y, y_max, dtype=np.float32)  # (256, 256, 1)
+
+#         # --- Combine all 4 label channels ---
+#         # Final label format = [y_norm, mask, y_min, y_max]
+#         y_comb = np.concatenate([y_norm, m_exp, y_min_c, y_max_c], axis=-1)  # (256, 256, 4)
+
+#         # Return resized input patch and 4-channel label patch
+#         return x, y_comb
+
+
+#     # Use the top half of the image as the support set
+#     x_support, y_support = process_half(0, mid)
+
+#     # Use the bottom half of the image as the query set
+#     x_query, y_query = process_half(mid, H)
+
+#     # Add batch dimension to match expected output format
+#     # Final shape: (1, 512, 1024, channels)
+#     x_support = np.expand_dims(x_support, axis=0)
+#     y_support = np.expand_dims(y_support, axis=0)
+#     x_query   = np.expand_dims(x_query, axis=0)
+#     y_query   = np.expand_dims(y_query, axis=0)
+
+#     # Return tensors in same format as original function
+#     return x_support, y_support, x_query, y_query, slr_val
+
+########################### END OF MY CODE ########################### 
+
+
 ################################################################################
 #                           CUSTOM LOSS (with mask)
 ################################################################################
@@ -201,7 +306,7 @@ def custom_loss(y_true, y_pred):
     # Pred has shape (batch, patch_size, patch_size, 1)
     y_pred  = tf.squeeze(y_pred, axis=-1)
 
-    # unnormalize
+    # unnormalize -> y_real = y_norm * (y_max - y_min) + y_min
     denorm_true = y_norm*(y_max - y_min + 1e-8) + y_min
     denorm_pred = y_pred*(y_max - y_min + 1e-8) + y_min
 
@@ -228,6 +333,8 @@ def custom_loss(y_true, y_pred):
 
     loss = alphaH*weighted_huber_loss + alphaC*weighted_cosh_loss + (1-alphaH-alphaC)*quantile_loss
     return tf.reduce_mean(loss)
+
+    ##### ??? if we re going to either ways un normalize why did we normalize and have 4 channels in the first place? 
 
 
 ################################################################################
@@ -290,11 +397,15 @@ class MAMLTrainer:
 ################################################################################
 
 def main():
+
+    start_time = time.time()  # ⏱️ Start timer
+
+
     print("TensorFlow version:", tf.__version__)
     print("Keras version:", keras.__version__)
     print("GPU available:", tf.test.is_gpu_available())
 
-    # 1) Load your CASPIAN model
+    # 1) Load your CASPIAN model 
     model = new_models.CASPIAN(
         input_shape=(PATCH_SIZE, PATCH_SIZE, 1),  # 64x64 patches
         filters=72, input_centering=True,
@@ -320,7 +431,8 @@ def main():
     )
 
     # 3) Load your dataset. Example: combined train set
-    ds_train = load_tf_dataset("./data/FSL_MAML_AD_train_ds_aug_split_1")
+    # ds_train = load_tf_dataset("./data/FSL_MAML_AD_train_ds_aug_split_1") # original line 
+    ds_train = load_tf_dataset("./data/AD/train/FSL_MAML_AD_train_ds_aug_split_1") 
     ds_train = ds_train.shuffle(200, reshuffle_each_iteration=True).repeat()
 
     # We'll iterate in Python, pulling one scenario at a time
@@ -363,6 +475,9 @@ def main():
                     grads_accum = grads_query
                 else:
                     grads_accum = [ga + g for ga, g in zip(grads_accum, grads_query)]
+
+                print(f"Epoch {epoch+1} Step {step+1} Task {task_count+1} | q_loss: {q_loss.numpy():.4f}") # added for tracking training progress
+
                 task_count += 1
 
             # after one meta-batch of tasks, average the grads & update
@@ -379,6 +494,15 @@ def main():
     # final save
     model.save_weights(os.path.join(SAVE_DIR, "final_maml_weights_256.h5"))
     print("MAML Training Done!")
+
+
+    # ⏱️ End timer + print summary
+    end_time = time.time()
+    duration = end_time - start_time
+
+    hours, rem = divmod(duration, 3600)
+    minutes, seconds = divmod(rem, 60)
+    print(f"⏱️ Total training time: {int(hours)} hours {int(minutes)} minutes {int(seconds)} seconds")   
 
 if __name__ == "__main__":
     main()

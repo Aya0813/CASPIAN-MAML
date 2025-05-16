@@ -30,7 +30,7 @@ def createDF(ext="*.input.npy", data='train', prefix='SF_', data_dir=''):
         label = np.load(fname + ".output.npy")              # shape (1024, 1024)
         label_flat = np.load(fname + ".output_flat.npy")
         input_arr = np.load(file_path.numpy())              # shape (1024, 1024)
-        
+
         fname = parts[-1]                                   # e.g. '00000100110010011.input.npy' (note: -1 means last element, -2: l avant dernier... )
 
         return fname, input_arr, label, label_flat
@@ -45,18 +45,25 @@ def createDF(ext="*.input.npy", data='train', prefix='SF_', data_dir=''):
     print("Dataset length: %d" % tf.data.experimental.cardinality(ds_paths).numpy())
 
 
+    # Map the path processing function across all dataset paths
     ds = ds_paths.map(
         lambda paths: tf.py_function(
             process_path,
             inp=[paths],
-            Tout=[tf.string, tf.float32, tf.float32, tf.float32]
+            Tout=[tf.string, tf.float32, tf.float32, tf.float32]  # Output types
         )
     )
 
+    # Choose directory based on training or holdout flag
     savedir = f"./data/FSL{prefix}dataset" if data == 'train' else f"./data/FSL_{prefix}holdout_dataset"
-    create_directory(savedir)
-    tf.data.experimental.save(ds, savedir)
-    print(f"{prefix}DB has been created")
+    create_directory(savedir)  # Create the directory if needed
+    tf.data.experimental.save(ds, savedir)  # Save the TensorFlow dataset
+    print(f"{prefix}DB has been created")  # Confirmation message
+
+
+# ----------------------------------------------
+# Function to apply random region masking ("cutouts") for data augmentation
+# ----------------------------------------------
 
 
 def rnd_rmv(f, x, y, yf, window, version, num_cutouts, scale_factor):
@@ -64,64 +71,90 @@ def rnd_rmv(f, x, y, yf, window, version, num_cutouts, scale_factor):
     Performs random cutouts on the grid where x == 1 or x == 0.5.
     Used in your augmentation pipeline.
     """
+
+    # Build new filename based on cutout parameters
     fname = f.numpy().decode('UTF-8') + "_rnd" + str(window.numpy()) + "_v" + str(version.numpy())
+
+    # Create a mask of all cells where x == 1.0 or x == 0.5
     mask = tf.logical_or(tf.math.equal(x, 1.0), tf.math.equal(x, 0.5))
+
+    # Get all coordinates where the mask is True
     arr = np.vstack((np.where(mask == True)[0], np.where(mask == True)[1])).T
+
+    # Create random indices to select cutout locations
     idxs = tf.range(tf.shape(arr)[0])
     ridxs = tf.random.shuffle(idxs)[:num_cutouts]
+
+    # Get random input coordinates to apply cutouts
     rinput = tf.gather(arr, ridxs)
-    rinput = rinput.numpy()
-    new_x = x.numpy()
-    
+    rinput = rinput.numpy()  # Convert to numpy array
+    new_x = x.numpy()  # Convert tensor to numpy array for editing
+
+    # Apply zero masking to defined regions (cutouts)
     for i in range(num_cutouts):
         start_i = max(0, rinput[i, 0] - window)
         end_i = min(new_x.shape[0], rinput[i, 0] + window)
         start_j = max(0, rinput[i, 1] - window)
         end_j = min(new_x.shape[1], rinput[i, 1] + window)
-        new_x[start_i:end_i, start_j:end_j] = 0
-    
-    return fname, new_x, y, yf
+        new_x[start_i:end_i, start_j:end_j] = 0  # Set region to zero
+
+    return fname, new_x, y, yf  # Return modified input and original labels
+
+# ----------------------------------------------
+# Function to split dataset and apply data augmentation
+# ----------------------------------------------
+
 
 def split_and_augmentDF(window=10, num_cutouts=1, repeats=1, original_ds=True, scale_factor=1, splits=3, prefix='SF_'):
     """
     Splits the dataset into train/val/test and optionally applies random cutout augmentation.
     """
+    # Create necessary directories
     create_directory("./data/temp")
     create_directory(f"./data/FSL_{prefix}dataset")
-    
-    for s in range(splits):
-        ds = tf.data.experimental.load(f"./data/FSL{prefix}dataset")
+
+    for s in range(splits):  # Loop over different data splits
+        ds = tf.data.experimental.load(f"./data/FSL{prefix}dataset")  # Load the saved dataset
+
+        # Split dataset sizes
         ds_size = int(ds.cardinality())
         train_size = int(0.79 * ds_size)
         val_size = int((ds_size - train_size) * 0.4)
         test_size = ds_size - val_size - train_size
-        ds = ds.shuffle(300, seed=s)
+
+        ds = ds.shuffle(300, seed=s)  # Shuffle the dataset with split-specific seed
+
+        # Reset temp folder
         if os.path.exists("./data/temp/"):
             shutil.rmtree("./data/temp/")
-        tf.data.experimental.save(ds, "./data/temp/")
-        ds = tf.data.experimental.load("./data/temp/")
+        tf.data.experimental.save(ds, "./data/temp/")  # Save shuffled dataset to disk
+        ds = tf.data.experimental.load("./data/temp/")  # Reload it fresh
 
+        # Slice dataset into train, test, val
         train_dataset = ds.take(train_size)
         test_dataset = ds.skip(train_size).take(test_size)
         val_dataset = ds.skip(train_size + test_size)
 
+        # Log dataset lengths
         print("Training dataset length: %d" % tf.data.experimental.cardinality(train_dataset).numpy())
         print("Validation dataset length: %d" % tf.data.experimental.cardinality(val_dataset).numpy())
         print("Testing dataset length: %d" % tf.data.experimental.cardinality(test_dataset).numpy())
-        
+
+        # Save datasets
         print(f"Saving the {prefix} test datasets ....")
         tf.data.experimental.save(test_dataset, f"./data/FSL_{prefix}test_ds_split_{s+1}")
         tf.data.experimental.save(train_dataset, f"./data/FSL_{prefix}train_ds_split_{s+1}")
         tf.data.experimental.save(val_dataset, f"./data/FSL_{prefix}val_ds_split_{s+1}")
         print("Done saving, proceeding to augmentation....")
-        
-        for k in range(2):
+
+        # Augmentation for train and val sets
+        for k in range(2):  # 0 = train, 1 = val
             temp_ds = train_dataset if k == 0 else val_dataset
             dss = []
-            if original_ds:
+            if original_ds:  # Add unaugmented dataset
                 dss.append(temp_ds)
 
-            for i in range(repeats):
+            for i in range(repeats):  # Repeat augmentation
                 print(f"Augmented DB slice {i} is in creation.......")
                 ds_augmented = temp_ds.map(
                     lambda f, x, y, yf: tf.py_function(
@@ -132,18 +165,28 @@ def split_and_augmentDF(window=10, num_cutouts=1, repeats=1, original_ds=True, s
                 )
                 dss.append(ds_augmented)
 
+            # Combine original + augmented datasets
             combined_dataset = dss[0]
             for i in range(1, len(dss)):
                 combined_dataset = combined_dataset.concatenate(dss[i])
 
-            combined_dataset = combined_dataset.prefetch(tf.data.AUTOTUNE)
+            combined_dataset = combined_dataset.prefetch(tf.data.AUTOTUNE)  # Prefetch for performance
+
+            # Save final augmented dataset
             ds_type = "train_ds_aug" if k == 0 else "val_ds_aug"
             name = f"./data/FSL_{prefix}{ds_type}_split_{s+1}"
             create_directory(name)
             tf.data.experimental.save(combined_dataset, name)
         print(f"{prefix}Augmented DBs have been created")
+
+    # Clean up temp folder
     if os.path.exists("./data/temp/"):
         shutil.rmtree("./data/temp/")
+
+
+# ----------------------------------------------
+# Function to combine two dataset prefixes into a combined one
+# ----------------------------------------------
 
 def combine_datasets():
     """
@@ -157,7 +200,7 @@ def combine_datasets():
         create_directory(f"./data/FSL_{combined_prefix}{ds_type}_split_{split_num}")
         tf.data.experimental.save(combined_ds, f"./data/FSL_{combined_prefix}{ds_type}_split_{split_num}")
     
-    splits = 1
+    splits = 1   # Number of dataset splits to combine
     for s in range(splits):
         for ds_type in ["train_ds", "val_ds", "test_ds", "train_ds_aug", "val_ds_aug"]:
             print(f"Combining datasets for {ds_type} split {s+1}")
@@ -166,26 +209,38 @@ def combine_datasets():
 
 
 
-#########################
+##################################################
 #  1) Create AD dataset for Main Training
-#########################
-createDF(ext="*.input.npy", 
-         data='train', 
-         prefix='MAML_AD_', 
-         data_dir=pathlib.Path("./data/Training_Validation_Testing_AD"))
+##################################################
 
-split_and_augmentDF(window=30, 
-                    repeats=23, 
-                    original_ds=True, 
-                    num_cutouts=2, 
-                    splits=1, 
-                    prefix='MAML_AD_')
+# createDF(ext="*.input.npy", 
+#          data='train', 
+#          prefix='MAML_AD_', 
+#          data_dir=pathlib.Path("./data/Training_Validation_Testing_AD"))
 
-#########################
+# split_and_augmentDF(window=30, 
+#                     repeats=23, 
+#                     original_ds=True, 
+#                     num_cutouts=2, 
+#                     splits=1, 
+#                     prefix='MAML_AD_')
+
+##################################################
 #  2) Create SF dataset
-#########################
+##################################################
+# createDF(ext="*.input.npy", 
+#          data='train', 
+#          prefix='FSL2_AD_', 
+#          data_dir=pathlib.Path("./data/FSLFSL_MAML_SF_dataset"))
+
+
+# initially the code above but had to change the last line cause wrong folder naming - SF instead of AD  
 createDF(ext="*.input.npy", 
          data='train', 
-         prefix='FSL2_AD_', 
+         prefix='FSLFSL_MAML_SF_', 
          data_dir=pathlib.Path("./data/FSLFSL_MAML_SF_dataset"))
+
+
+
+# dataset_spec.pb is a metadata file automatically created by TensorFlow when you save a dataset 
 
