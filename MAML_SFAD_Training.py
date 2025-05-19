@@ -32,6 +32,14 @@ from models import CASPIANv2_MAML as new_models
 
 
 
+## patch size - stay 1024 
+## support and query - depends on OLU 
+## inner , inner learning , and outer learning rate  - by exprimentation 
+## META_BATCH_SIZE = 10
+## epochs = start with 50 or 20 
+## STEPS_PER_EPOCH = 20 
+
+
 ###### for quick testnig of the code 
 PATCH_SIZE = 64             # keep as-is unless you want to change model structure [ ??? confused - confirm whether originally set to 256 or 64 cause in all the rest of the code it seems to be set to 64 ? ]
 SUPPORT_PATCHES = 20        # ↓ from 20 → speeds up inner loop 
