@@ -303,7 +303,7 @@ def custom_loss(y_true, y_pred):
     y_min   = y_true[:,:,:,2]
     y_max   = y_true[:,:,:,3]
 
-    # Pred has shape (batch, patch_size, patch_size, 1)
+    # Pred has shape (batch, patch_size, patch_size, 1) ### why batch here?? 
     y_pred  = tf.squeeze(y_pred, axis=-1)
 
     # unnormalize -> y_real = y_norm * (y_max - y_min) + y_min
