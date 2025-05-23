@@ -1,9 +1,20 @@
+# Defines a custom neural network architecture called CASPIAN, tailored for flood depth prediction.
+# Integrates domain-specific inputs like SLR (Sea Level Rise).
+# Uses a UNet-like encoder-decoder structure enhanced with:
+    # ResNeXt bottlenecks
+    # Attention (CBAM)
+    # Spatial supervision
+    # Optional SLR injection
+
+
 from models.keras_vision_transformer import swin_layers
 from models.keras_vision_transformer import transformer_layers
 from tensorflow.keras.layers import (Input, Dropout, Lambda, Conv2D, Conv2DTranspose, 
                                      MaxPooling2D, Concatenate, Activation, Add, multiply, 
                                      LeakyReLU, ZeroPadding2D, UpSampling2D, Dense, 
                                      AveragePooling2D)
+
+
 from tensorflow.keras.models import Model
 import tensorflow.keras.layers as layers
 import tensorflow as tf

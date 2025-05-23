@@ -19,21 +19,23 @@ from   models import CASPIANv2_MAML as new_models
 # had to re run the part of the data construction code about SF cause the dataset_spec.pb was missing
 
 
+# BASE_CHECKPOINT = "./models/trained_models/MAML_CASPIAN_patch_latest/final_maml_weights_256.h5"
 BASE_CHECKPOINT = "./models/trained_models/MAML_CASPIAN_patch-10epoch-test/final_maml_weights_256.h5"
-SF_DATASET      = "./data/FSLFSLFSL_MAML_SF_dataset"  # <‑‑ your file
-OUT_DIR         = "./models/trained_models/MAML_CASPIAN_patch_FT_SF_10epoch-test"
+
+SF_DATASET      = "./data/SF/FSLFSLFSL_MAML_SF_dataset"  # <‑‑ your file
+OUT_DIR         = "./models/trained_models/MAML_CASPIAN_patch_FT_SF_10epoch-test-may22nd"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # ───── Hyper‑params for **fine‑tuning**  (much smaller / shorter) ───────────
 
 # same as the hyperparameters for training with the exception of FINETUNE_EPOCHS
-PATCH_SIZE       = 256
-SUPPORT_PATCHES  = 30
-QUERY_PATCHES    = 30
+PATCH_SIZE       = 64
+SUPPORT_PATCHES  = 10
+QUERY_PATCHES    = 10
 INNER_STEPS      = 5
 INNER_LR         = 0.00002          #  ≈4× smaller than before
 OUTER_LR         = 0.000002
-META_BATCH_SIZE  = 2
+META_BATCH_SIZE  = 2 
 FINETUNE_EPOCHS  = 25               #  tiny – you only have a few tasks
 STEPS_PER_EPOCH  = 50
 
@@ -63,83 +65,42 @@ def load_tf_dataset(path):
     return tf.data.Dataset.load(path).map(map_fn)
 
 # ───── Patch sampler (unchanged) ────────────────────────────────────────────
+# ───── Patch sampler (unchanged) ────────────────────────────────────────────
 def sample_support_query(x_big,y_big,region_mask,slr_val,
                          patch=PATCH_SIZE,supp=SUPPORT_PATCHES,que=QUERY_PATCHES):
-    
-    # Convert TensorFlow tensors to NumPy arrays for easier manipulation
     x_np,y_np,mask_np = x_big.numpy(), y_big.numpy(), region_mask.numpy()
-
-    # Get the min and max of the label grid (used for normalization)
     y_min,y_max,eps   = y_np.min(), y_np.max(), 1e-8
-
-    # Get height, width, and channel count of the input image
     H,W,_ = x_np.shape
-
-    # Define an inner function to sample one random patch
     def rand_patch():
-       # Choose a random top-left corner such that the patch fits within the image
-        i0 = np.random.randint(0, H - patch + 1) # random row start
-        j0 = np.random.randint(0, W - patch + 1) # random col start
+        # random top‑left corner
+        i0 = np.random.randint(0, H - patch + 1)
+        j0 = np.random.randint(0, W - patch + 1)
 
-        # Extract a patch of size (patch x patch x 1) from input, label, and mask
         # slices (shape: (patch, patch, 1))
-        xp = x_np[i0:i0+patch, j0:j0+patch, :]           # ← already 3‑D # input patch (e.g., binary mask values)
-        yp = y_np[i0:i0+patch, j0:j0+patch, :]           # label patch (flood depths)
-        mp = mask_np[i0:i0+patch, j0:j0+patch]           # binary region-of-interest mask
+        xp = x_np[i0:i0+patch, j0:j0+patch, :]           # ← already 3‑D
+        yp = y_np[i0:i0+patch, j0:j0+patch, :]
+        mp = mask_np[i0:i0+patch, j0:j0+patch]
 
-        # Normalize the label patch to [0, 1] using min-max scaling
-        yp_n = (yp - y_min) / (y_max - y_min + eps)      # (patch,patch,1) # normalized flood depth
-
+        # normalise y
+        yp_n = (yp - y_min) / (y_max - y_min + eps)      # (patch,patch,1)
 
         # build the 4‑channel target
-        mp_e   = mp[..., None].astype(np.float32)        # Expand the binary mask to shape (patch, patch, 1) and convert to float32
-
-        # Create constant arrays (same shape as yp) filled with y_min and y_max
+        mp_e   = mp[..., None].astype(np.float32)        # (patch,patch,1)
         y_min_c = np.full_like(yp, y_min, dtype=np.float32)
         y_max_c = np.full_like(yp, y_max, dtype=np.float32)
 
-        # Concatenate 4 channels: [normalized y, mask, y_min, y_max]
-        # → shape becomes (patch, patch, 4)
         y_comb = np.concatenate(
             [yp_n, mp_e, y_min_c, y_max_c], axis=-1)     # (patch,patch,4)
 
-        return xp, y_comb # return the input patch and processed label patch
-
-    
-    x_s, y_s = zip(*(rand_patch() for _ in range(supp))) # Sample 'supp' support patches
-    x_q, y_q = zip(*(rand_patch() for _ in range(que)))  # Sample 'que' query patches
-
-
-    
-    #### for extracting half of the image for support and half for query instead of random
-    # Define top and bottom halves
-    mid = H // 2
-    def extract_half(start_row, end_row):
-        xp = x_np[start_row:end_row, :, :]
-        yp = y_np[start_row:end_row, :, :]
-        mp = mask_np[start_row:end_row, :]
-        yp_n = (yp - y_min) / (y_max - y_min + eps)
-        mp_e = mp[..., None].astype(np.float32)
-        y_min_c = np.full_like(yp, y_min, dtype=np.float32)
-        y_max_c = np.full_like(yp, y_max, dtype=np.float32)
-        y_comb = np.concatenate([yp_n, mp_e, y_min_c, y_max_c], axis=-1)
         return xp, y_comb
 
-    # Use top half for support, bottom half for query
-    x_s, y_s = extract_half(0, mid)
-    x_q, y_q = extract_half(mid, H)
-
-
-    # Stack all patches into arrays of shape:
-        # x_s: (supp, patch, patch, 1)
-        # y_s: (supp, patch, patch, 4)
-        # x_q: (que, patch, patch, 1)
-        # y_q: (que, patch, patch, 4)
-        # slr_val: scalar value passed through for later use
+    x_s, y_s = zip(*(rand_patch() for _ in range(supp)))
+    x_q, y_q = zip(*(rand_patch() for _ in range(que)))
 
     return (np.stack(x_s), np.stack(y_s),
             np.stack(x_q), np.stack(y_q),
             slr_val)
+
 
 # ───── Custom loss (copy‑paste from your training script) ───────────────────
 @tf.function

@@ -11,6 +11,9 @@ import re
 from datetime import datetime
 import time
 
+# added for debugging 
+import sys
+
 # added for resizing 
 import cv2
 
@@ -20,42 +23,24 @@ from models import CASPIANv2_MAML as new_models
 ################################################################################
 #                              MAML HYPERPARAMS
 ################################################################################
-# PATCH_SIZE = 256        # dimension of each patch: 64x64
-# SUPPORT_PATCHES = 20    # how many patches in the support set (the number of patches we get from the original)
-# QUERY_PATCHES   = 20    # how many patches in the query set
-# INNER_STEPS = 10        # steps in the MAML inner loop
-# INNER_LR = 0.00085      # learning rate for inner loop
-# OUTER_LR = 0.000085     # learning rate for outer loop
-# META_BATCH_SIZE = 10    # how many tasks (scenarios) in each meta-batch
-# EPOCHS = 200            # how many outer-loop epochs
-# STEPS_PER_EPOCH = 100   # how many meta-batches per epoch
+PATCH_SIZE = 64         # [ same as og ]dimension of each patch: 64x64 [ it s actually 64 and not 256 Bilal was just testing ]
+SUPPORT_PATCHES = 20    # [ og 20 - tried 10 ] how many patches in the support set (the number of patches we get from the original)
+QUERY_PATCHES   = 20   # [ og 20 - tried 10 ] how many patches in the query set
+INNER_STEPS = 5         # [ og 10 - tried 5 ] steps in the MAML inner loop
+INNER_LR = 0.00085        # [ og 0.00085 ] learning rate for inner loop
+OUTER_LR = 0.000085       # [ og 0.000085 ] learning rate for outer loop
+META_BATCH_SIZE = 5     # [ og 10 - tried 5] how many tasks (scenarios) in each meta-batch
+EPOCHS = 200           # [ og 200 - tried 100] how many outer-loop epochs
+STEPS_PER_EPOCH = 100 # og100 - tried 10 ] how many meta-batches per epoch
 
 
 
-## patch size - stay 1024 
-## support and query - depends on OLU 
-## inner , inner learning , and outer learning rate  - by exprimentation 
-## META_BATCH_SIZE = 10
-## epochs = start with 50 or 20 
-## STEPS_PER_EPOCH = 20 
-
-
-###### for quick testnig of the code 
-PATCH_SIZE = 64             # keep as-is unless you want to change model structure [ ??? confused - confirm whether originally set to 256 or 64 cause in all the rest of the code it seems to be set to 64 ? ]
-SUPPORT_PATCHES = 20        # ↓ from 20 → speeds up inner loop 
-QUERY_PATCHES = 20          # ↓ from 20 → speeds up outer loop eval
-INNER_STEPS = 10            # ↓ from 10 → greatly reduces computation per task
-INNER_LR = 0.00085          # same
-OUTER_LR = 0.000085         # same
-META_BATCH_SIZE = 10        # ↓ from 10 → fewer tasks per meta-update
-EPOCHS = 200                # ↓ from 200 → enough to see basic progress
-STEPS_PER_EPOCH = 100       # ↓ from 100 → quick per-epoch loop
-
-########
-
-MODEL_NAME = "MAML_CASPIAN_patch"
+MODEL_NAME = "MAML_CASPIAN_patch_v1_May22nd_full_hyper"
 SAVE_DIR = f"./models/trained_models/{MODEL_NAME}"
 os.makedirs(SAVE_DIR, exist_ok=True)
+
+# SKIP_LOG_PATH = "./skipped_scenarios.log"
+# open(SKIP_LOG_PATH, 'w').close()  # clear the log on each run
 
 ################################################################################
 #                     LOAD & PREPARE EACH SCENARIO
@@ -78,6 +63,12 @@ def get_ad_mask():
 sf_mask = get_sf_mask()
 ad_mask = get_ad_mask()
 
+
+# debugging 
+expected_olu_configs = {f"{'0'*i}1{'0'*(16-i)}" for i in range(17)}
+found_olu_configs = set()
+
+
 def clear_ds(f, x, y, yf):
     """
     Similar to your original code:
@@ -86,6 +77,9 @@ def clear_ds(f, x, y, yf):
       - Return the full (x,y,mask,slr)
     """
     f_str = f.numpy().decode('UTF-8')               # Converts the filename f into a regular Python string.
+    print ("f is", f)                               # prints e.g -> tf.Tensor(b'100000....1_0.5m.input.npy_rnd30_v4', shape =(), dtype = string)
+    print ("f_str is", f_str)                       # prints e.g -> 100000....1_0.5m.input.npy_rnd30_v4
+    
     slr_val = 1.0                                   # Initializes slr_val to a default value of 1.0 in case parsing fails.
     match = re.search(r'_(\d+(\.\d+)?)m', f_str)    # Searches the filename for a pattern like _1.5m to extract the sea level rise value.
     if match:                                       # If a match is found, extracts the number (e.g., 1.5) and converts it to a float 
@@ -96,11 +90,75 @@ def clear_ds(f, x, y, yf):
         region_mask = sf_mask
     else:
         region_mask = ad_mask
+    
+    ########## debugging 
 
-    # Expand dims from (1024,1024) to (1024,1024,1)
-    x = tf.expand_dims(x, axis=-1)
-    y = tf.expand_dims(y, axis=-1)
-    return x, y, region_mask, slr_val
+    # --- Extract the OLU binary string from the filename (e.g., '00001000000000000')
+    olu_bits = f_str.split('_')[0]
+
+    # --- Initialize cluster counters
+    max_cluster = 0        # stores the largest number of adjacent 0s found
+    curr_cluster = 0       # current sequence length of adjacent 0s while scanning
+
+    # --- Iterate through each bit in the OLU config
+    for bit in olu_bits:
+        if bit == '0':
+            curr_cluster += 1                     # continue cluster
+            max_cluster = max(max_cluster, curr_cluster)  # update max if needed
+        else:
+            curr_cluster = 0                      # reset if a 1 is encountered
+
+    # --- Check if the maximum cluster of adjacent 0s is less than the threshold
+    if max_cluster < 4:
+        print(f"⏩ Skipping {olu_bits} — not enough clustered unprotected OLUs (max cluster: {max_cluster})")
+        print ("\n")
+
+        # with open(SKIP_LOG_PATH, 'a') as f_log:
+        #     f_log.write(f"SKIPPED: {olu_bits}\n")
+
+        # --- Return dummy tensors so training continues smoothly
+        dummy_x = tf.zeros([1024, 1024, 1], dtype=tf.float32)
+        dummy_y = tf.zeros([1024, 1024, 1], dtype=tf.float32)
+        dummy_mask = tf.zeros([1024, 1024], dtype=tf.bool)
+        dummy_slr = tf.constant(0.0, dtype=tf.float32)
+        return dummy_x, dummy_y, dummy_mask, dummy_slr
+
+    else:
+        print(f"✅ Using {olu_bits} — max cluster of 0s: {max_cluster}")
+        print ("\n")
+
+
+        # # Only proceed if it's 17 bits
+        # if len(olu_bits) == 17 and set(olu_bits).issubset({'0', '1'}):
+        #     if olu_bits in expected_olu_configs:
+        #         print(f"✅ Found valid OLU config: {olu_bits}")
+        #         found_olu_configs.add(olu_bits)
+        
+        # missing_olu_configs = expected_olu_configs - found_olu_configs
+
+        # print(f"\n🔎 Found {len(found_olu_configs)} of 17 expected single-OLU configs.")
+        # print("❌ Missing configs:")
+        # for m in sorted(missing_olu_configs):
+        #     print(m)    
+
+
+        # print ("Original 'x' is:", x) # prints tf.Tensor([[......][.....]], shape = (1024, 1024), dtype = float32)
+        # print ("Original 'y' is:", y) # prints tf.Tensor([[......][.....]], shape = (1024, 1024), dtype = float32)
+
+        x_np = x.numpy()
+        y_np = y.numpy()
+        
+        # print ("unique values in x:", np.unique(x_np))  # prints [ 0. 0.5 1. ]
+        # print ("unique values in y:", np.unique(y_np))  # prints  [0.        4.2242985 4.2257514 ... 6.097078  6.103161  6.1048727]
+
+        # for debugging 
+        # sys.exit() # to exit the program
+
+        # Expand dims from (1024,1024) to (1024,1024,1)
+        x = tf.expand_dims(x, axis=-1)
+        y = tf.expand_dims(y, axis=-1)
+
+        return x, y, region_mask, slr_val
 
 def map_fn(f, x, y, yf):
     """
@@ -138,6 +196,7 @@ def sample_support_and_query_patches(x_big, y_big, region_mask, slr_val,
     - slr_val:       float for the entire scenario
     - patch_size:    e.g. 64
     - support_count, query_count: number of patches for support/query sets
+
     Returns:
       x_support: (support_count, patch_size, patch_size, 1)
       y_support: (support_count, patch_size, patch_size, 4)  ( [y_norm, mask, y_min, y_max] )
@@ -204,93 +263,6 @@ def sample_support_and_query_patches(x_big, y_big, region_mask, slr_val,
     return x_support, y_support, x_query, y_query, slr_val
 
 
-########################### MY CODE ########################### 
-
-# def sample_support_and_query_patches(x_big, y_big, region_mask, slr_val, 
-#                                      patch_size=64, 
-#                                      support_count=4, 
-#                                      query_count=4):
-#     """
-#     Modified to use full image: top half = support, bottom half = query.
-#     Returns:
-#         x_support: (1, 512, 1024, 1)
-#         y_support: (1, 512, 1024, 4)
-#         x_query:   (1, 512, 1024, 1)
-#         y_query:   (1, 512, 1024, 4)
-#         slr_val:   scalar SLR value
-#     """
-#     # Convert tensors to numpy arrays for manipulation
-#     x_np = x_big.numpy()         # input grid (1024, 1024, 1)
-#     y_np = y_big.numpy()         # target grid (1024, 1024, 1)
-#     mask_np = region_mask.numpy()  # region mask (1024, 1024), bool
-
-#     # Calculate min and max values of the target y, used for normalization
-#     y_min = float(y_np.min())
-#     y_max = float(y_np.max())
-#     eps = 1e-8  # small constant to avoid division by zero
-
-#     # Get image dimensions
-#     H, W, _ = x_np.shape
-#     mid = H // 2  # 512, used to split the image in half
-
-#     def process_half(start_row, end_row):
-#         """
-#         Process one half (either top or bottom) of the full 1024×1024 image
-#         into the shape expected by the model (256×256).
-#         """
-
-#         # Slice the half region from the full image
-#         x = x_np[start_row:end_row, :, :]       # Input grid (512, 1024, 1)
-#         y = y_np[start_row:end_row, :, :]       # Ground truth (512, 1024, 1)
-#         m = mask_np[start_row:end_row, :]       # Mask (512, 1024)
-
-#         # --- Resize all 3 inputs to (256, 256) ---
-#         # Resize input x to (256, 256) using nearest neighbor (safe for binary values)
-#         x = cv2.resize(x, (256, 256), interpolation=cv2.INTER_NEAREST)[..., None]  # (256, 256, 1)
-
-#         # Resize y to (256, 256) — flood depth labels
-#         y = cv2.resize(y, (256, 256), interpolation=cv2.INTER_NEAREST)[..., None]  # (256, 256, 1)
-
-#         # Resize mask to (256, 256), converting from bool to uint8 first
-#         m = cv2.resize(m.astype(np.uint8), (256, 256), interpolation=cv2.INTER_NEAREST)  # (256, 256)
-
-#         # --- Normalize the target y values ---
-#         y_norm = (y - y_min) / (y_max - y_min + eps)  # Normalized depth values → (256, 256, 1)
-
-#         # Expand mask dimensions and convert to float32 (so it matches model inputs)
-#         m_exp = m[..., None].astype(np.float32)  # (256, 256, 1)
-
-#         # Create full-size arrays for y_min and y_max to attach to each pixel
-#         y_min_c = np.full_like(y, y_min, dtype=np.float32)  # (256, 256, 1)
-#         y_max_c = np.full_like(y, y_max, dtype=np.float32)  # (256, 256, 1)
-
-#         # --- Combine all 4 label channels ---
-#         # Final label format = [y_norm, mask, y_min, y_max]
-#         y_comb = np.concatenate([y_norm, m_exp, y_min_c, y_max_c], axis=-1)  # (256, 256, 4)
-
-#         # Return resized input patch and 4-channel label patch
-#         return x, y_comb
-
-
-#     # Use the top half of the image as the support set
-#     x_support, y_support = process_half(0, mid)
-
-#     # Use the bottom half of the image as the query set
-#     x_query, y_query = process_half(mid, H)
-
-#     # Add batch dimension to match expected output format
-#     # Final shape: (1, 512, 1024, channels)
-#     x_support = np.expand_dims(x_support, axis=0)
-#     y_support = np.expand_dims(y_support, axis=0)
-#     x_query   = np.expand_dims(x_query, axis=0)
-#     y_query   = np.expand_dims(y_query, axis=0)
-
-#     # Return tensors in same format as original function
-#     return x_support, y_support, x_query, y_query, slr_val
-
-########################### END OF MY CODE ########################### 
-
-
 ################################################################################
 #                           CUSTOM LOSS (with mask)
 ################################################################################
@@ -306,13 +278,12 @@ def custom_loss(y_true, y_pred):
       - only for pixels where mask==1
     """
     # Extract channels
-    y_norm  = y_true[:,:,:,0]
-    mask    = y_true[:,:,:,1]
-    y_min   = y_true[:,:,:,2]
+    y_norm  = y_true[:,:,:,0] # # Normalized ground-truth depth
+    mask    = y_true[:,:,:,1] # # Valid region indicator
+    y_min   = y_true[:,:,:,2] 
     y_max   = y_true[:,:,:,3]
 
-    # Pred has shape (batch, patch_size, patch_size, 1) ### why batch here?? 
-    y_pred  = tf.squeeze(y_pred, axis=-1)
+    y_pred  = tf.squeeze(y_pred, axis=-1) # shape now (batch, patch_size, patch_size)
 
     # unnormalize -> y_real = y_norm * (y_max - y_min) + y_min
     denorm_true = y_norm*(y_max - y_min + 1e-8) + y_min
@@ -341,8 +312,6 @@ def custom_loss(y_true, y_pred):
 
     loss = alphaH*weighted_huber_loss + alphaC*weighted_cosh_loss + (1-alphaH-alphaC)*quantile_loss
     return tf.reduce_mean(loss)
-
-    ##### ??? if we re going to either ways un normalize why did we normalize and have 4 channels in the first place? 
 
 
 ################################################################################
@@ -374,7 +343,7 @@ class MAMLTrainer:
         original_weights = [tf.identity(w) for w in meta_weights]
 
         # INNER LOOP
-        for _ in range(self.inner_steps):
+        for _ in range(self.inner_steps): 
             with tf.GradientTape() as tape:
                 preds = self.model({"input_grid": x_s, "slr_input": slr_val}, training=True)
                 s_loss = custom_loss(y_s, preds)
@@ -393,7 +362,7 @@ class MAMLTrainer:
         for w_old, w_new in zip(original_weights, meta_weights):
             w_new.assign(w_old)
 
-        return q_loss, grads_query
+        return q_loss, grads_query 
 
     def meta_update(self, grads_accum):
         """Apply accumulated gradients to meta-weights."""
@@ -407,6 +376,9 @@ class MAMLTrainer:
 def main():
 
     start_time = time.time()  # ⏱️ Start timer
+
+    epoch_losses = []
+
 
 
     print("TensorFlow version:", tf.__version__)
@@ -440,8 +412,8 @@ def main():
 
     # 3) Load your dataset. Example: combined train set
     # ds_train = load_tf_dataset("./data/FSL_MAML_AD_train_ds_aug_split_1") # original line 
-    ds_train = load_tf_dataset("./data/AD/train/FSL_MAML_AD_train_ds_aug_split_1") 
-    ds_train = ds_train.shuffle(200, reshuffle_each_iteration=True).repeat()
+    ds_train = load_tf_dataset("./data/AD/train/FSL_MAML_AD_train_ds_aug_split_1") # works with loading: FSL_MAML_AD_train_ds_aug_split_1
+    ds_train = ds_train.shuffle(200, reshuffle_each_iteration=True).repeat() # the repeat is here cause we need a repeatable dataset (so we have enough scenarios for the number of tasks we have)
 
     # We'll iterate in Python, pulling one scenario at a time
     ds_iter = iter(ds_train)
@@ -456,7 +428,8 @@ def main():
             task_count = 0
 
             for _ in range(META_BATCH_SIZE):
-                f_str, x_big, y_big, region_mask, slr_val = next(ds_iter)
+                f_str, x_big, y_big, region_mask, slr_val = next(ds_iter) # pull one training scenario at a time
+
                 # sample patches for support/query
                 x_s_np, y_s_np, x_q_np, y_q_np, scenario_slr = sample_support_and_query_patches(
                     x_big, y_big, region_mask, slr_val,
@@ -464,37 +437,68 @@ def main():
                     support_count=SUPPORT_PATCHES,
                     query_count=QUERY_PATCHES
                 )
+
                 # Convert to TF
                 # shape => (support_count, 64,64,1)
                 x_s = tf.convert_to_tensor(x_s_np, dtype=tf.float32)
                 y_s = tf.convert_to_tensor(y_s_np, dtype=tf.float32)
                 x_q = tf.convert_to_tensor(x_q_np, dtype=tf.float32)
                 y_q = tf.convert_to_tensor(y_q_np, dtype=tf.float32)
+
+                ## ??? 
                 # SLR => shape (support_count, 1) or (1,1). We'll do (support_count,1) so each patch is a batch item
                 # But we can also do just (1,1) broadcast. Either works.
                 slr_tensor_supp = tf.ones([SUPPORT_PATCHES,1], dtype=tf.float32)*scenario_slr
                 slr_tensor_query= tf.ones([QUERY_PATCHES,1], dtype=tf.float32)*scenario_slr
 
+
+                valid_task = False  # Track if the task should be used
+
                 # fast adapt
                 q_loss, grads_query = maml.fast_adapt(x_s, y_s, x_q, y_q, slr_tensor_query)
-                meta_batch_losses.append(q_loss.numpy())
 
-                if grads_accum is None:
-                    grads_accum = grads_query
+                if not np.isnan(q_loss.numpy()):
+                    meta_batch_losses.append(q_loss.numpy())
+                    valid_task = True  # this task is valid
+
+                    if grads_accum is None:
+                        grads_accum = grads_query
+                    else:
+                        grads_accum = [ga + g for ga, g in zip(grads_accum, grads_query)]
+
                 else:
-                    grads_accum = [ga + g for ga, g in zip(grads_accum, grads_query)]
+                    print(f"⚠️ Skipped adding NaN q_loss from Task {task_count+1}")
 
-                print(f"Epoch {epoch+1} Step {step+1} Task {task_count+1} | q_loss: {q_loss.numpy():.4f}") # added for tracking training progress
-
+                print(f"Epoch {epoch+1} Step {step+1} Task {task_count+1} | q_loss: {q_loss.numpy():.4f}")
                 task_count += 1
-
+               
             # after one meta-batch of tasks, average the grads & update
-            grads_accum = [g / task_count for g in grads_accum]
-            maml.meta_update(grads_accum)
+            # Only update if we had at least one valid task
+            if grads_accum is not None and task_count > 0:
+                grads_accum = [g / task_count for g in grads_accum]
+                maml.meta_update(grads_accum)
+                step_loss = np.mean(meta_batch_losses[-task_count:])
+                print(f"Epoch {epoch+1} Step {step+1} | ⬅️ Meta-batch avg q_loss: {step_loss:.4f}")
+            else:
+                print(f"⚠️ No valid tasks in Step {step+1}. Skipping gradient update.")
+
             iteration += 1
 
-        epoch_loss = np.mean(meta_batch_losses[-META_BATCH_SIZE*STEPS_PER_EPOCH:])
+
+        # backpropagate
+        if len(meta_batch_losses) == 0:
+            epoch_loss = float('nan')
+        else:
+            epoch_loss = np.mean(meta_batch_losses[-META_BATCH_SIZE*STEPS_PER_EPOCH:])
+
+        # epoch_loss = np.mean(meta_batch_losses[-META_BATCH_SIZE*STEPS_PER_EPOCH:])
         print(f"Epoch {epoch+1}/{EPOCHS}, iteration {iteration}, query loss: {epoch_loss:.4f}")
+
+        # Save only valid epoch losses
+        if not np.isnan(epoch_loss):
+            epoch_losses.append(epoch_loss) 
+
+        # epoch_losses.append(epoch_loss)
 
         # optionally save checkpoint
         # model.save_weights(os.path.join(SAVE_DIR, f"maml_epoch_{epoch+1}.h5"))
@@ -502,6 +506,17 @@ def main():
     # final save
     model.save_weights(os.path.join(SAVE_DIR, "final_maml_weights_256.h5"))
     print("MAML Training Done!")
+
+
+    np.savetxt(r"C:\Users\ae2195\Desktop\MAML\MAML_CASPIAN_patch_v1_May22nd_full_hyper.csv", epoch_losses, delimiter=",")
+    print("📁 Saved query loss per epoch to epoch_query_losses.csv")
+
+
+    # if os.path.exists(SKIP_LOG_PATH):
+    #     with open(SKIP_LOG_PATH, 'r') as f:
+    #         skipped_count = sum(1 for _ in f)
+    #     print(f"⏩ Total skipped scenarios due to low OLU clustering: {skipped_count}")
+
 
 
     # ⏱️ End timer + print summary

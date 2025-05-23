@@ -447,7 +447,7 @@ def CASPIAN_beta(input_shape=(1024, 1024, 1), filters=81, cardinality=36, activa
         
     # Decoder
     the_weights = None
-    for i in range(depth-1, -1, -1):
+    for i in range(depth-1, -1, -1): 
         # Pooling Supervised Upsampling block
         if version != 3:
           x = layers.Concatenate(axis=-1)([x, pools[i]])
