@@ -11,6 +11,7 @@ The script:
 5.  writes predictions + Grad‑CAM overlays to disk,
 6.  exports the metrics to an Excel workbook.
 """
+
 import os, re, glob
 import numpy as np
 import pandas as pd
@@ -34,18 +35,17 @@ from utilsSFAD import artae_score, delta_score, acc0   # <- already in your repo
 # EVAL_DATASET     = "C:/NYUAD/CASPIAN/AregSF/data/FSL_MAML_AD_test_ds_split_1"
 
 
-# above code is the original - bellow just for initial testing 
+# above code is the original - bellow is my code 
+# to change
+
 PATCH_SIZE       = 64
-#MODEL_WEIGHTS    = "./models/trained_models/MAML_CASPIAN_patch_FT_SF_10epoch-test-final-step/final_maml_ft_sf.h5"
-MODEL_WEIGHTS    = "./models/trained_models/MAML_CASPIAN_patch/final_maml_weights_256.h5"
-EVAL_DATASET     = "./data/AD/test/FSL_MAML_AD_test_ds_split_1"
+MODEL_WEIGHTS    = "./models/trained_models/aya/CASPIAN_MAML_v1_test1_SF_FT/final_maml_ft_sf.h5"
+EVAL_DATASET     = "./data/AD_slr_0.5m/test/FSL_MAML_AD_test_ds_split_1"
 
+SAVE_PRED_DIR       = "./Results/CASPIAN_MAML_v1_test1_SF_FT/Predictions"
+SAVE_EXPL_IMG_DIR   = "./Results/CASPIAN_MAML_v1_test1_SF_FT/Explainability"
+SAVE_EXPL_NPY_DIR   = "./Results/CASPIAN_MAML_v1_test1_SF_FT/Explainability NPY"
 
-### 
-
-SAVE_PRED_DIR       = "./Results/MAML-May22nd-og/Predictions"
-SAVE_EXPL_IMG_DIR   = "./Results/MAML-May22nd-og/Explainability"
-SAVE_EXPL_NPY_DIR   = "./Results/MAML-May22nd-og/Explainability NPY"
 os.makedirs(SAVE_PRED_DIR,      exist_ok=True)
 os.makedirs(SAVE_EXPL_IMG_DIR,  exist_ok=True)
 os.makedirs(SAVE_EXPL_NPY_DIR,  exist_ok=True)
@@ -53,29 +53,41 @@ os.makedirs(SAVE_EXPL_NPY_DIR,  exist_ok=True)
 # ──────────────────────────────────────────────────────────────────────────────
 #  Utility helpers
 # ──────────────────────────────────────────────────────────────────────────────
-def normalize(a):
-    mn, mx = a.min(), a.max()
+def normalize(a):                # common step before feeding data into ML to ensure numerical stability and faster training.
+    mn, mx = a.min(), a.max()    # Get the minimum and maximum values in the input array `a`
+    
+    # Normalize the array to the range [0, 1]
+        # Subtract the minimum so the smallest value becomes 0
+        # Divide by (max - min + small constant) to scale everything between 0 and 1
+        # The small constant `1e-8` prevents division by zero in case all values in `a` are the same
     return (a - mn) / (mx - mn + 1e-8)
 
 def make_gradcam_heatmap(inputs, model, last_layer="activation_12"):
     """
     inputs = {"input_grid": patch[None,...], "slr_input": slr_val[None,1]}
-    returns heatmap as 2‑D numpy array in [0,1]
+        a dictionary with two tensors: the input image patch and the sea level rise value
+    last_layer: the name of the last convolutional (activation) layer to base Grad-CAM on
+
+    returns heatmap as 2‑D numpy array in [0,1] (normalized) showing important regions
     """
+
+    # Creates a new model (grad_model) that outputs: The feature maps from the last_layer and The final model prediction
     grad_model = tf.keras.models.Model(
         [model.inputs],
         [model.get_layer(last_layer).output, model.output]
-    )
+    ) # This lets you access both activations and predictions in one forward pass.
+
     with tf.GradientTape() as tape:
         conv_out, preds = grad_model(inputs, training=False)
         class_channel   = preds[...,0]                           # regression
+
     grads     = tape.gradient(class_channel, conv_out)[0]        # (H,W,C)
     weights   = tf.reduce_mean(grads, axis=(0,1))                # (C,)
     cam       = tf.reduce_sum(weights * conv_out[0], axis=-1)    # (H,W)
     cam       = np.maximum(cam, 0)
     cam       = normalize(cam)
-    cam       = tf.image.resize(cam[...,None],
-                                (PATCH_SIZE, PATCH_SIZE)).numpy()[...,0]
+    cam       = tf.image.resize(cam[...,None],(PATCH_SIZE, PATCH_SIZE)).numpy()[...,0]
+    
     return cam
 
 def save_gradcam_overlay(img_patch, heatmap, save_png, save_npy, alpha=0.5):
@@ -152,10 +164,14 @@ model = caspian_models.CASPIAN(
     sup_level=1, compression_factor=0.85,
     gr_level=4, slr_input=True
 )
-# build once
-_ = model({"input_grid": tf.zeros([1,PATCH_SIZE,PATCH_SIZE,1]),
-           "slr_input": tf.zeros([1,1])})
+
+
+# Run a dummy forward pass to build the model's internal layers and shapes
+_ = model({"input_grid": tf.zeros([1,PATCH_SIZE,PATCH_SIZE,1]), "slr_input": tf.zeros([1,1])})
+
+# Load the pre-trained model weights from file
 model.load_weights(MODEL_WEIGHTS)
+
 print("✓  MAML weights loaded")
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -163,20 +179,33 @@ print("✓  MAML weights loaded")
 # ──────────────────────────────────────────────────────────────────────────────
 def clear_ds_eval(f,x,y,yf):
     """Produce (scenario_str, full_input_grid, full_label_grid, mask, slr)"""
-    scenario = f.numpy().decode()
-    m = MASK_SF if len(scenario.split('.')[0])==30 else MASK_AD
-    # get SLR
+
+    scenario = f.numpy().decode()                                   # Decode the filename from bytes to string
+    m = MASK_SF if len(scenario.split('.')[0])==30 else MASK_AD     # Choose the mask based on filename length → if 30 digits, it's SF, otherwise AD
+    
+    # Extract the SLR value from the filename using regex
     m_ = re.search(r'_(\d+(\.\d+)?)m', scenario)
     slr_val = float(m_.group(1)) if m_ else 1.0
+    
+    # Return: scenario string, input x with channel added, label y with channel added, mask, and SLR value
     return scenario, tf.expand_dims(x,-1), tf.expand_dims(y,-1), m, slr_val
 
+# This function wraps `clear_ds_eval` so it can be used with tf.data pipelines
 def map_eval(f,x,y,yf):
     return tf.py_function(
-        clear_ds_eval, inp=[f,x,y,yf],
-        Tout=[tf.string, tf.float32, tf.float32, tf.bool, tf.float32]
+        clear_ds_eval,                      # Call the Python function to process one example
+        inp=[f,x,y,yf],                     # Inputs: filename, input image, label, label flattened
+        Tout=[                              # Output types:
+            tf.string,                      # scenario name as string
+            tf.float32,                     # input image tensor with shape (H, W, 1)
+            tf.float32,                     # label tensor with shape (H, W, 1)
+            tf.bool,                        # region mask (bool grid)
+            tf.float32                      # sea level rise value (float)
+        ]
     )
 
-ds_eval = tf.data.Dataset.load(EVAL_DATASET).map(map_eval).batch(1)
+# Load the evaluation dataset from disk, then Apply the map function to each example using map_eval (which calls clear_ds_eval)
+ds_eval = tf.data.Dataset.load(EVAL_DATASET).map(map_eval).batch(1) # Group the dataset into batches of size 1 (i.e., 1 scenario at a time)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Metric containers
@@ -191,29 +220,49 @@ metrics = {
 #  Evaluation loop
 # ──────────────────────────────────────────────────────────────────────────────
 # ─── inside the evaluation loop ──────────────────────────────────────────
-for scenario_b, x_full_b, y_full_b, mask_b, slr_b in ds_eval:
-    # scenario_b.shape == (1,) and dtype == 'S' (byte‑string)
-    scenario = scenario_b.numpy()[0].decode("utf‑8")   # <-- fixed line
-    x_full     = x_full_b.numpy()[0]        # (1024,1024,1)
-    y_full     = y_full_b.numpy()[0]        # (1024,1024,1)
-    mask_bool  = mask_b.numpy()[0]          # (1024,1024)  ← squeeze the batch‑dim
-    slr_val    = slr_b.numpy()
 
-    # Split into patches & batch‑predict
-    patches   = grid_to_patches(x_full)
-    slr_batch = np.ones((patches.shape[0],1), np.float32)*slr_val
-    preds_p   = model.predict({"input_grid":patches, "slr_input":slr_batch},
-                              verbose=0)
-    pred_grid = patches_to_grid(preds_p)[:,:,0]       # (1024,1024)
+for scenario_b, x_full_b, y_full_b, mask_b, slr_b in ds_eval:
+    # scenario_b ->     shape == (1,) and dtype == byte‑string
+    # x_full_b   ->     shape: (1, 1024, 1024, 1)
+    # y_full_b   ->     shape: (1, 1024, 1024, 1)
+    # mask_b     ->     shape: (1, 1024, 1024)
+    # slr_b      ->     shape: (1,) → sea level rise value
+
+    scenario = scenario_b.numpy()[0].decode("utf‑8")   # extracts the first (and only) element from the batch and converts bytes to string
+
+    # bellow: squeeze the batch dim 
+    x_full     = x_full_b.numpy()[0]        # shape: (1024,1024,1)
+    y_full     = y_full_b.numpy()[0]        # shape: (1024,1024,1)
+    mask_bool  = mask_b.numpy()[0]          # shape: (1024,1024) 
+    slr_val    = slr_b.numpy()              # scalar
+
+    # Split into patches & batch‑predict  [ note: the comments bellow are for the case of  PATCH_SIZE = 64 as an e.g ] 
+    patches   = grid_to_patches(x_full)                            # patches shape: (256, 64, 64, 1) [ because 1064/64 = 16 -> 16*16 = 256 ]
+    slr_batch = np.ones((patches.shape[0],1), np.float32)*slr_val  # Creates 256 copies of slr_val (one for each patch)
+    preds_p   = model.predict({
+        "input_grid":patches,                                      # (256, 64, 64, 1)
+        "slr_input":slr_batch},                                    # (256, 1)
+        verbose=0)   
+    
+    # Assuming the model outputs 1 channel per patch -> preds_p shape: (256, 64, 64, 1)
+    pred_grid = patches_to_grid(preds_p)[:,:,0]       # patches_to_grid(preds_p) returns shape (1024, 1024, 1) 
+                                                      # then [:, :, 0] removes the last singleton dimension 
+                                                      # -> final shape: (1024, 1024)
 
     # Prepare label channels for un‑normalisation
     # ─── extract 2‑D arrays and mask them ──────────────────────────────────
-    y_true_2d = y_full[:,:,0]          # raw ground‑truth depths
-    y_pred_2d = pred_grid              # model prediction (already raw)
 
-    valid_t = y_true_2d[mask_bool]     # 1‑D vectors over inundation mask
+    # raw ground‑truth depths (we remove the 3rd dim)
+    y_true_2d = y_full[:,:,0]               # shape: (1024, 1024) [ y_full shape: (1024, 1024, 1) ]
+    
+    # model prediction (already raw) 
+    y_pred_2d = pred_grid                   # shape: (1024, 1024)   
+
+    # We only want to compute MAE, RMSE, etc. on the valid locations, i.e., where mask_bool == True.
+    valid_t = y_true_2d[mask_bool]          # 1‑D vectors over inundation mask
     valid_p = y_pred_2d[mask_bool]
-
+    
+    # valid_t and valid_p are 1D arrays, each with N values (only the masked locations).
 
     # Store metrics
     def update(dic):
@@ -272,9 +321,25 @@ for scenario_b, x_full_b, y_full_b, mask_b, slr_b in ds_eval:
 # ──────────────────────────────────────────────────────────────────────────────
 #  Aggregate & export metrics
 # ──────────────────────────────────────────────────────────────────────────────
-def summarise(dic):
-    return [f"{np.mean(dic[k]):.5f} ± {np.std(dic[k]):.5f}" for k in
-            ['mae','rmse','rtae','d05','d01','r2','acc']]
+
+def summarise (dic): 
+    results = [] 
+
+    # list of all metric keys we want to summarize
+    metric_keys = ['mae', 'rmse', 'rtae', 'd05', 'd01', 'r2', 'acc']
+
+    for key in metric_keys:
+        values = dic[key]               # list of values for this metric 
+        mean_val = np.mean(values)      # compute mean 
+        std_val = np.syd(values)        # compute standard dev. 
+
+        # format the result as "mean +- std", rounded to 5 decimal places
+        formatted = f"{mean_val:.5f} ±  {std_val:.5f}"
+        results.append(formatted)
+    
+    return results 
+
+
 
 summary = pd.DataFrame({
     "Metric": ["MAE","RMSE","RTAE","δ0.5","δ0.1","R²","Acc0"],
@@ -284,5 +349,7 @@ summary = pd.DataFrame({
 })
 print("\n\n", summary, "\n")
 
-summary.to_excel("./Results/MAML_Eval.xlsx", index=False)
-print("✓  Results written to Results/MAML_Eval.xlsx")
+
+# to change
+summary.to_excel("./Results/MAML_CASPIAN_patch_v1_May22nd_full_hyper.xlsx", index=False)
+print("✓  Results written to /Results/MAML_CASPIAN_patch_v1_May22nd_full_hyper.xlsx")

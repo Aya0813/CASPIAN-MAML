@@ -65,7 +65,6 @@ def load_tf_dataset(path):
     return tf.data.Dataset.load(path).map(map_fn)
 
 # ───── Patch sampler (unchanged) ────────────────────────────────────────────
-# ───── Patch sampler (unchanged) ────────────────────────────────────────────
 def sample_support_query(x_big,y_big,region_mask,slr_val,
                          patch=PATCH_SIZE,supp=SUPPORT_PATCHES,que=QUERY_PATCHES):
     x_np,y_np,mask_np = x_big.numpy(), y_big.numpy(), region_mask.numpy()

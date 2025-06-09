@@ -225,6 +225,7 @@ def combine_datasets():
 #                     splits=1, 
 #                     prefix='MAML_AD_')
 
+
 ##################################################
 #  2) Create SF dataset
 ##################################################
@@ -232,6 +233,24 @@ def combine_datasets():
 #          data='train', 
 #          prefix='FSL2_AD_', 
 #          data_dir=pathlib.Path("./data/FSLFSL_MAML_SF_dataset"))
+
+
+# initially the code above but had to change the last line cause wrong folder naming - SF instead of AD  
+createDF(ext="*.input.npy", 
+         data='train', 
+         prefix='FSL_MAML_SF_', 
+         data_dir=pathlib.Path("./data/FSLFSL_MAML_SF_dataset"))
+
+
+
+# dataset_spec.pb is a metadata file automatically created by TensorFlow when you save a dataset 
+
+
+### meeting with Bilal - May 16th 
+    ### FSL - meaning Few Shot Learning 
+    # training  val test - complete AD data
+
+
     # gives you 2 files one for the MAML training and one for the FT 
     # why MAML then FT 
             # initial main training - with AD
@@ -240,20 +259,3 @@ def combine_datasets():
             # why different splits - to show the model diff. cases 
             # bilal - change it to only 1 split 
             # you can remove the split thing if you want
-
-# initially the code above but had to change the last line cause wrong folder naming - SF instead of AD  
-createDF(ext="*.input.npy", 
-         data='train', 
-         prefix='FSLFSL_MAML_SF_', 
-         data_dir=pathlib.Path("./data/FSLFSL_MAML_SF_dataset"))
-
-
-
-# dataset_spec.pb is a metadata file automatically created by TensorFlow when you save a dataset 
-
-
-
-
-### meeting with Bilal - May 16th 
-    ### FSL - meaning Few Shot Learning 
-    # trianig  val test - complete AD data

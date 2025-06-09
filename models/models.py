@@ -1,3 +1,10 @@
+
+### Overview
+# This script defines multiple neural architectures:
+# - Swin-UNet: a transformer-based encoder-decoder
+# - CASPIAN: a CNN-based encoder-decoder with supervision and attention
+# - CASPIAN_beta: a flexible version of CASPIAN for ablation studies
+
 from models.keras_vision_transformer import swin_layers
 from models.keras_vision_transformer import transformer_layers
 from tensorflow.keras.layers import Input, Dropout, Lambda, Conv2D, Conv2DTranspose, MaxPooling2D, Concatenate, Activation, Add, multiply, add, concatenate, LeakyReLU, ZeroPadding2D, UpSampling2D, BatchNormalization, Dense, AveragePooling2D
