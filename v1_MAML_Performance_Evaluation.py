@@ -11,6 +11,7 @@ The script:
 5.  exports the metrics to an Excel workbook.
 """
 
+
 import os, re, glob
 import numpy as np
 import pandas as pd
@@ -33,17 +34,32 @@ from utilsSFAD import artae_score, delta_score, acc0   # <- already in your repo
 # MODEL_WEIGHTS    = "./models/trained_models/MAML_CASPIAN_patch/final_maml_weights_256.h5"
 # EVAL_DATASET     = "C:/NYUAD/CASPIAN/AregSF/data/FSL_MAML_AD_test_ds_split_1"
 
-
 # above code is the original - bellow is my code 
-# to change
 
-PATCH_SIZE       = 1024
-MODEL_WEIGHTS    = "./models/trained_models/aya/CASPIAN_MAML_v1_test2/final_maml_weights.h5"
-EVAL_DATASET     = "./data/AD_slr_0.5m/test/FSL_MAML_AD_test_ds_split_1"
+### only part of the code to change as I'm running experiments
+PATCH_SIZE          = 1024
+MODEL_NAME          = "v2_opt_test2/SF_FT"
+###
 
-SAVE_PRED_DIR       = "./Results/CASPIAN_MAML_v1_test2/Predictions"
-SAVE_EXPL_IMG_DIR   = "./Results/CASPIAN_MAML_v1_test2/Explainability"
-SAVE_EXPL_NPY_DIR   = "./Results/CASPIAN_MAML_v1_test2/Explainability NPY"
+
+MODEL_WEIGHTS      = f"./models/trained_models/aya/{MODEL_NAME}/final_maml_weights.h5"
+AD_EVAL_DATASET    = "./data/AD_slr_0.5m/test/FSL_MAML_AD_test_ds_split_1"
+SF_EVAL_DATASET    = "./data/SF_slr_1m/FSL_MAML_SF_test_ds_split_1"
+
+SAVE_BASE_DIR      = f"./Results/{MODEL_NAME}"
+SAVE_PRED_DIR      = f"{SAVE_BASE_DIR}/Predictions"
+SAVE_EXPL_IMG_DIR  = f"{SAVE_BASE_DIR}/Explainability"
+SAVE_EXPL_NPY_DIR  = f"{SAVE_BASE_DIR}/Explainability NPY"
+EXCEL_SAVE_PATH    = f"{SAVE_BASE_DIR}.xlsx"
+
+
+print("Current working directory:", os.getcwd())
+print ('\n')
+
+print (f"MODEL_NAME: {MODEL_NAME}")
+print (f"AD_EVAL_DATASET: {AD_EVAL_DATASET}")
+print (f"SF_EVAL_DATASET: {SF_EVAL_DATASET}")
+
 
 os.makedirs(SAVE_PRED_DIR,      exist_ok=True)
 os.makedirs(SAVE_EXPL_IMG_DIR,  exist_ok=True)
@@ -165,7 +181,10 @@ def map_eval(f,x,y,yf):
     )
 
 # Load the evaluation dataset from disk, then Apply the map function to each example using map_eval (which calls clear_ds_eval)
-ds_eval = tf.data.Dataset.load(EVAL_DATASET).map(map_eval).batch(1) # Group the dataset into batches of size 1 (i.e., 1 scenario at a time)
+ad_eval_dataset = tf.data.Dataset.load(AD_EVAL_DATASET).map(map_eval)
+sf_eval_dataset = tf.data.Dataset.load(SF_EVAL_DATASET).map(map_eval)
+
+ds_eval = ad_eval_dataset.concatenate(sf_eval_dataset).batch(1) # Group the dataset into batches of size 1 (i.e., 1 scenario at a time)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Metric containers
@@ -252,8 +271,24 @@ for scenario_b, x_full_b, y_full_b, mask_b, slr_b in ds_eval:
         dic['d05'].append( delta_score(np.array([valid_t]), np.array([valid_p]),0.5).mean())
         dic['d01'].append( delta_score(np.array([valid_t]), np.array([valid_p]),0.1).mean())
         dic['acc'].append(  acc0(np.array([valid_t]), np.array([valid_p])).mean())
-    region = 'sf' if len(scenario.split('.')[0])==30 else 'ad'
-    update(metrics[region]);  update(metrics['all'])
+    
+# region = 'sf' if len(scenario.split('.')[0])==30 else 'ad'
+
+    prefix = scenario.split('_')[0]  # gets the part before the first "_"
+
+    if len(prefix) == 17:
+        region = "ad"
+        m = MASK_AD
+    elif len(prefix) == 30:
+        region = "sf"
+        m = MASK_SF
+    else:
+        print(f"⚠️ Could not determine region for scenario: {scenario}")
+        continue
+    
+    
+    update(metrics[region])
+    update(metrics['all'])
 
     # ─── Save prediction / label ────────────────────────────────────────────
     base = os.path.splitext(os.path.basename(scenario))[0]
@@ -330,7 +365,5 @@ summary = pd.DataFrame({
 print("\n\n", summary, "\n")
 
 
-# to change
-EXCEL_SAVE_PATH = "./Results/CASPIAN_MAML_v1_test2.xlsx"
 summary.to_excel(EXCEL_SAVE_PATH, index=False) # index = False means do not write the row numbers (DataFrame index) to the Excel file.
 print(f"✓  Results written to {EXCEL_SAVE_PATH}")

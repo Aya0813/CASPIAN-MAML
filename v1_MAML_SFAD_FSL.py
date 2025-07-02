@@ -1,7 +1,6 @@
 ###### VERSION where support set -> 1 scenario && query set -> 1 scenario
 
 
-
 #!/usr/bin/env python
 # coding: utf-8
 """
@@ -11,6 +10,8 @@ is sampled **only from the SF TF‑Dataset** you prepared.
 """
 import os, tensorflow as tf, numpy as np
 from   models import CASPIANv2_MAML as new_models
+from datetime import datetime
+import time
 
 # ───── Locations ────────────────────────────────────────────────────────────
 # og 
@@ -21,27 +22,31 @@ from   models import CASPIANv2_MAML as new_models
 # had to re run the part of the data construction code about SF cause the dataset_spec.pb was missing
 
 ### 
-# part to change before running the code
+# part 1 to change before running the code
 
-BASE_CHECKPOINT = "./models/trained_models/aya/CASPIAN_MAML_v1_test2/final_maml_weights.h5"
-SF_DATASET      = "./data/SF_slr_1m/FSL_MAML_SF_dataset"
-OUT_DIR         = "./models/trained_models/aya/CASPIAN_MAML_v1_test2_SF_FT"
-log_file_path = f"{OUT_DIR}/loss_log.txt" 
+MODEL_NAME = "v1_test4"
 
+BASE_CHECKPOINT = f"./models/trained_models/aya/{MODEL_NAME}/final_maml_weights.h5"
+# SF_DATASET    = "./data/SF_slr_1m/FSL_MAML_SF_dataset"   # was using the full SF data 
+SF_DATASET      = "./data/SF_slr_1m/FSL_MAML_SF_train_ds_aug_split_1"   # now only using a section for training and the rest of teh data val & test 
+
+
+OUT_DIR         = f"./models/trained_models/aya/{MODEL_NAME}/SF_FT"
+log_file_path   = f"{OUT_DIR}/loss_log.txt" 
 
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # ───── Hyper‑params for **fine‑tuning**  (much smaller / shorter) ───────────
-#  part to change before running the code
+# part 2 (Final) to change before running the code
 # same as the hyperparameters for training with the exception of FINETUNE_EPOCHS
 PATCH_SIZE       = 1024               # same as main training code 
-INNER_STEPS      = 30                 # same as main training code 
-INNER_LR         = 0.00002            #  ≈4× smaller than in the main training code
-OUTER_LR         = 0.000002           # also smaller 
+INNER_STEPS      = 5                  # (from 20 in training code) 
+INNER_LR         = 0.000002           #  ≈4× smaller than in the main training code
+OUTER_LR         = 0.0000002           # also smaller 
 META_BATCH_SIZE  = 5                  # same as main training code 
 
-FINETUNE_EPOCHS  = 50                 # set similar to the og code as an initial run 
-STEPS_PER_EPOCH  = 100                # same as main training code 
+FINETUNE_EPOCHS  = 20                 # set similar to the og code as an initial run 
+STEPS_PER_EPOCH  = 10                 # same as main training code 
 
 # ───── Helper to load the TF‑Dataset exactly as before ──────────────────────
 def get_sf_mask():
@@ -159,6 +164,10 @@ class MAMLTrainer:
         s.opt.apply_gradients(zip(g_acc, s.m.trainable_variables))
 
 # ───── Build CASPIAN & load **pre‑trained** weights ─────────────────────────
+
+start_time = time.time()  # ⏱️ Start timer
+
+
 model = new_models.CASPIAN(
     input_shape=(PATCH_SIZE,PATCH_SIZE,1),
     filters=72,input_centering=True,depth=4,cardinality=34,activation='tanh',
@@ -175,13 +184,21 @@ maml = MAMLTrainer(model, INNER_LR, OUTER_LR, INNER_STEPS, META_BATCH_SIZE)
 
 # be careful -> Since we are trying to get 2 by 2 elements -> if the dataset has an odd number of samples, the final batch will only contain 1 sample
 # for this reason we are using drop_remainder=True as without that it was crashing
-ds_sf = load_tf_dataset(SF_DATASET).shuffle(50,reshuffle_each_iteration=True).batch(2, drop_remainder=True).repeat()
+# ds_sf = load_tf_dataset(SF_DATASET).shuffle(50,reshuffle_each_iteration=True).batch(2, drop_remainder=True).repeat() # og line 
+## new line for fasting data handling 
+ds_sf = load_tf_dataset(SF_DATASET) \
+           .shuffle(50, reshuffle_each_iteration=True) \
+           .batch(2, drop_remainder=True) \
+           .repeat() \
+           .prefetch(tf.data.AUTOTUNE)
+
 it_sf = iter(ds_sf)
 
 log_file = open(log_file_path, "w")  
 
 # Write experiment header
 log_file.write("========================================\n")
+log_file.write(f"Data used: {SF_DATASET}\n")
 log_file.write(f"Base checkpoint path: {BASE_CHECKPOINT}\n")
 log_file.write(f"PATCH_SIZE: {PATCH_SIZE}\n")
 log_file.write(f"INNER_STEPS: {INNER_STEPS}\n")
@@ -261,8 +278,19 @@ for epoch in range(FINETUNE_EPOCHS):
 FT_WEIGHTS = os.path.join(OUT_DIR, "final_maml_ft_sf.h5")
 model.save_weights(FT_WEIGHTS)
 print("✓  fine‑tuned weights written to", FT_WEIGHTS)
-log_file.write("fine‑tuned weights written to", FT_WEIGHTS)
+log_file.write(f"fine‑tuned weights written to {FT_WEIGHTS}\n")
 log_file.flush()  # Ensures it's written to disk immediately
 
+
+# ⏱️ End timer + print summary
+end_time = time.time()
+duration = end_time - start_time
+
+hours, rem = divmod(duration, 3600)
+minutes, seconds = divmod(rem, 60)
+
+print(f"⏱️ Total training time: {int(hours)} hours {int(minutes)} minutes {int(seconds)} seconds")   
+log_file.write(f"Total training time: {int(hours)} hours {int(minutes)} minutes {int(seconds)} seconds")
+log_file.flush()  
 
 log_file.close()

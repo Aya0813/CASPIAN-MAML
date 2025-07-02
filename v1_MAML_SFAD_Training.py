@@ -31,12 +31,12 @@ from models import CASPIANv2_MAML as new_models
 
 # to change before running the code
 PATCH_SIZE = 1024           # full image
-INNER_STEPS = 30            # increase to 10-20 to adapt meaningfully from a single full image
-INNER_LR = 0.0007      
-OUTER_LR = 0.00007 
-META_BATCH_SIZE = 5         # 2-4 - cause full image mem intensive
-EPOCHS = 200                # 50 - 100 - watch convergence to avoid overfitting
-STEPS_PER_EPOCH = 100       # 20-40 - cause full image mem intensive
+INNER_STEPS = 10            # increase to 10-20 to adapt meaningfully from a single full image
+INNER_LR = 0.00002      
+OUTER_LR = 0.000001 
+META_BATCH_SIZE = 5        # 2-4 - cause full image mem intensive
+EPOCHS = 50                # 50 - 100 - watch convergence to avoid overfitting
+STEPS_PER_EPOCH = 25       # 20-40 - cause full image mem intensive
 
 # INITIAL TEST JUST TO SEE THAT IT WORKS - works :)) 
 # PATCH_SIZE = 1024        # Full image (still needed for model input shape)
@@ -50,7 +50,7 @@ STEPS_PER_EPOCH = 100       # 20-40 - cause full image mem intensive
 # SUPPORT_PATCHES and QUERY_PATCHES not used anymore
 
 # to change before running the code
-MODEL_NAME = "CASPIAN_MAML_v1_test2"
+MODEL_NAME = "v1_test5"
 SAVE_DIR = f"./models/trained_models/aya/{MODEL_NAME}"
 
 log_file_path = f"{SAVE_DIR}/loss_log.txt"
@@ -88,8 +88,8 @@ def clear_ds(f, x, y, yf):
       - Return the full (x,y,mask,slr)
     """
     f_str = f.numpy().decode('UTF-8')               # Converts the filename f into a regular Python string.
-    #print ("f is", f)                              # prints e.g -> tf.Tensor(b'100000....1_0.5m.input.npy_rnd30_v4', shape =(), dtype = string)
-    #print ("f_str is", f_str)                      # prints e.g -> 100000....1_0.5m.input.npy_rnd30_v4
+    # print ("f is", f)                              # prints e.g -> tf.Tensor(b'100000....1_0.5m.input.npy_rnd30_v4', shape =(), dtype = string)
+    print ("f_str is", f_str)                      # prints e.g -> 100000....1_0.5m.input.npy_rnd30_v4
     
     slr_val = 1.0                                   # Initializes slr_val to a default value of 1.0 in case parsing fails.
     match = re.search(r'_(\d+(\.\d+)?)m', f_str)    # Searches the filename for a pattern like _1.5m to extract the sea level rise value.
@@ -294,7 +294,6 @@ class MAMLTrainer:
 ################################################################################
 
 def main():
-
     start_time = time.time()  # ⏱️ Start timer
 
     print("TensorFlow version:", tf.__version__)
@@ -339,7 +338,7 @@ def main():
 
     # Write experiment header
     log_file.write("========================================\n")
-    log_file.write("Data used:", data_path)
+    log_file.write(f"Data used: {data_path}\n")
     log_file.write(f"Model Name: {MODEL_NAME}\n")
     log_file.write(f"PATCH_SIZE: {PATCH_SIZE}\n")
     log_file.write(f"INNER_STEPS: {INNER_STEPS}\n")
@@ -384,10 +383,10 @@ def main():
                 region_mask_q = region_mask_batch [1]                # shape: (1024, 1024) bool 
                 slr_val_q = slr_val_batch[1]                         # shape: 1 float value
 
-                
-                # y final -> shape: (1, 1024, 1024, 4)
+            
                 y_s_final_np = process_label_with_mask(y_s, region_mask_s)
                 y_q_final_np = process_label_with_mask(y_q, region_mask_q)
+                # y final -> shape: (1, 1024, 1024, 4)
 
                 # convert y from numpy to tensor (x is already a tensor) 
                 y_s = tf.convert_to_tensor(y_s_final_np, dtype=tf.float32)

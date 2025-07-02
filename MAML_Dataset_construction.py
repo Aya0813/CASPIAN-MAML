@@ -105,7 +105,7 @@ def rnd_rmv(f, x, y, yf, window, version, num_cutouts, scale_factor):
 # ----------------------------------------------
 
 
-def split_and_augmentDF(window=10, num_cutouts=1, repeats=1, original_ds=True, scale_factor=1, splits=3, prefix='SF_'):
+def split_and_augmentDF(window=10, num_cutouts=1, repeats=1, original_ds=True, scale_factor=1, splits=3, prefix='SF_', base_path='./data'):
     """
     Splits the dataset into train/val/test and optionally applies random cutout augmentation.
     """
@@ -114,7 +114,10 @@ def split_and_augmentDF(window=10, num_cutouts=1, repeats=1, original_ds=True, s
     create_directory(f"./data/FSL_{prefix}dataset")
 
     for s in range(splits):  # Loop over different data splits
-        ds = tf.data.experimental.load(f"./data/FSL{prefix}dataset")  # Load the saved dataset
+
+        # changed
+        dataset_path = os.path.join(base_path, f"FSL_{prefix}dataset")  
+        ds = tf.data.experimental.load(dataset_path)  # Load the saved dataset
 
         # Split dataset sizes
         ds_size = int(ds.cardinality())
@@ -219,7 +222,7 @@ def combine_datasets():
 #          data_dir=pathlib.Path("./data/Training_Validation_Testing_AD"))
 
 # split_and_augmentDF(window=30, 
-#                     repeats=23, 
+#                     repeats=23,       # This is how many times to repeat random cutout augmentations on top of the original dataset (only for training & validation).
 #                     original_ds=True, 
 #                     num_cutouts=2, 
 #                     splits=1, 
@@ -236,20 +239,27 @@ def combine_datasets():
 
 
 # initially the code above but had to change the last line cause wrong folder naming - SF instead of AD  
-createDF(ext="*.input.npy", 
-         data='train', 
-         prefix='FSL_MAML_SF_', 
-         data_dir=pathlib.Path("./data/FSLFSL_MAML_SF_dataset"))
+# createDF(ext="*.input.npy", 
+#          data='train', 
+#          prefix='FSL_MAML_SF_', 
+#          data_dir=pathlib.Path("./data/FSLFSL_MAML_SF_dataset"))
 
+
+# create test data for SF 
+split_and_augmentDF(
+    window=30,
+    repeats=20,              # <-- For few-shot fine-tuning, this helps a lot
+    original_ds=True,
+    num_cutouts=2,
+    splits=1,
+    prefix='MAML_SF_',
+    base_path = 'C:/Users/ae2195/Desktop/MAML/data/SF_slr_1m'
+)
+
+# then i ll get augmented training and aug. validation data and test data for SF 
 
 
 # dataset_spec.pb is a metadata file automatically created by TensorFlow when you save a dataset 
-
-
-### meeting with Bilal - May 16th 
-    ### FSL - meaning Few Shot Learning 
-    # training  val test - complete AD data
-
 
     # gives you 2 files one for the MAML training and one for the FT 
     # why MAML then FT 

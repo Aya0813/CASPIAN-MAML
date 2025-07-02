@@ -7,6 +7,8 @@ is sampled **only from the SF TF‑Dataset** you prepared.
 """
 import os, tensorflow as tf, numpy as np
 from   models import CASPIANv2_MAML as new_models
+from datetime import datetime
+import time
 
 # ───── Locations ────────────────────────────────────────────────────────────
 # BASE_CHECKPOINT = "./models/trained_models/MAML_CASPIAN_patch/final_maml_weights.h5"
@@ -20,28 +22,31 @@ from   models import CASPIANv2_MAML as new_models
 
 
 # BASE_CHECKPOINT = "./models/trained_models/MAML_CASPIAN_patch_latest/final_maml_weights_256.h5"
-BASE_CHECKPOINT = "./models/trained_models/MAML_CASPIAN_patch-10epoch-test/final_maml_weights_256.h5"
+BASE_CHECKPOINT = "./models/trained_models/aya/archive/MAML_CASPIAN_patch_og_full_hyper/final_maml_weights_64.h5"
 
-SF_DATASET      = "./data/SF/FSLFSLFSL_MAML_SF_dataset"  # <‑‑ your file
-OUT_DIR         = "./models/trained_models/MAML_CASPIAN_patch_FT_SF_10epoch-test-may22nd"
+
+SF_DATASET      = "./data/SF_slr_1m/FSL_MAML_SF_train_ds_aug_split_1"  # <‑‑ your file
+OUT_DIR         = "./models/trained_models/aya/MAML_CASPIAN_patch_og_full_hyper_SF_FT_train_aug"
 os.makedirs(OUT_DIR, exist_ok=True)
+
+log_file_path = f"{OUT_DIR}/loss_log.txt" 
 
 # ───── Hyper‑params for **fine‑tuning**  (much smaller / shorter) ───────────
 
 # same as the hyperparameters for training with the exception of FINETUNE_EPOCHS
 PATCH_SIZE       = 64
-SUPPORT_PATCHES  = 10
-QUERY_PATCHES    = 10
-INNER_STEPS      = 5
+SUPPORT_PATCHES  = 20
+QUERY_PATCHES    = 20
+INNER_STEPS      = 10
 INNER_LR         = 0.00002          #  ≈4× smaller than before
 OUTER_LR         = 0.000002
-META_BATCH_SIZE  = 2 
+META_BATCH_SIZE  = 10 
 FINETUNE_EPOCHS  = 25               #  tiny – you only have a few tasks
 STEPS_PER_EPOCH  = 50
 
 # ───── Helper to load the TF‑Dataset exactly as before ──────────────────────
 def get_sf_mask():
-    d = np.load("./sf_full_grid_1024.npy", allow_pickle=True).item()
+    d = np.load("./data/mask/sf_full_grid_1024.npy", allow_pickle=True).item()
     m  = np.zeros((1024,1024), bool)
     idx= np.array(list(d.values()));  m[idx[:,0],idx[:,1]] = True
     return m.T
@@ -144,6 +149,9 @@ class MAMLTrainer:
         s.opt.apply_gradients(zip(g_acc, s.m.trainable_variables))
 
 # ───── Build CASPIAN & load **pre‑trained** weights ─────────────────────────
+
+start_time = time.time()  # ⏱️ Start timer
+
 model = new_models.CASPIAN(
     input_shape=(PATCH_SIZE,PATCH_SIZE,1),
     filters=72,input_centering=True,depth=4,cardinality=34,activation='tanh',
@@ -160,6 +168,22 @@ maml = MAMLTrainer(model, INNER_LR, OUTER_LR, INNER_STEPS, META_BATCH_SIZE)
 ds_sf = load_tf_dataset(SF_DATASET).shuffle(50,reshuffle_each_iteration=True).repeat()
 it_sf = iter(ds_sf)
 
+log_file = open(log_file_path, "w")  
+
+# Write experiment header
+log_file.write("========================================\n")
+log_file.write(f"Base checkpoint path: {BASE_CHECKPOINT}\n")
+log_file.write(f"SUPPORT_PATCHES: {SUPPORT_PATCHES}\n")
+log_file.write(f"QUERY_PATCHES: {QUERY_PATCHES}\n")
+log_file.write(f"INNER_STEPS: {INNER_STEPS}\n")
+log_file.write(f"INNER_LR: {INNER_LR}\n")
+log_file.write(f"OUTER_LR: {OUTER_LR}\n")
+log_file.write(f"META_BATCH_SIZE: {META_BATCH_SIZE}\n")
+log_file.write(f"FINETUNE_EPOCHS: {FINETUNE_EPOCHS}\n")
+log_file.write(f"STEPS_PER_EPOCH: {STEPS_PER_EPOCH}\n")
+log_file.write("========================================\n\n")
+log_file.flush()
+
 # ───── Fine‑tuning loop (few epochs) ────────────────────────────────────────
 for epoch in range(FINETUNE_EPOCHS):
     losses = []
@@ -174,14 +198,38 @@ for epoch in range(FINETUNE_EPOCHS):
             xq=tf.convert_to_tensor(xq); yq=tf.convert_to_tensor(yq)
             slr_t=tf.ones([QUERY_PATCHES,1],tf.float32)*slr_v
             qloss,g = maml.fast(xs,ys,xq,yq,slr_t)
+
+            print(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, Step {step+1}/{STEPS_PER_EPOCH}, Task {n+1}/{META_BATCH_SIZE}, query-loss: {qloss:.4f}\n")
+            log_file.write(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, Step {step+1}/{STEPS_PER_EPOCH}, Task {n+1}/{META_BATCH_SIZE}, query-loss: {qloss:.4f}\n")
+            log_file.flush()  # Ensures it's written to disk immediately
+
+
             losses.append(qloss.numpy())
             if acc_g is None: acc_g=g
             else:             acc_g=[a+b for a,b in zip(acc_g,g)]
             n+=1
         acc_g=[g/n for g in acc_g];  maml.meta_update(acc_g)
     print(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}  –  mean query‑loss: {np.mean(losses):.4f}")
+    log_file.write(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, Step {step+1}/{STEPS_PER_EPOCH}, Task {n+1}/{META_BATCH_SIZE}, query-loss: {qloss:.4f}\n")
+    log_file.flush()  # Ensures it's written to disk immediately
 
 # ───── Save fine‑tuned weights ──────────────────────────────────────────────
 FT_WEIGHTS = os.path.join(OUT_DIR, "final_maml_ft_sf.h5")
 model.save_weights(FT_WEIGHTS)
 print("✓  fine‑tuned weights written to", FT_WEIGHTS)
+log_file.write(f"fine‑tuned weights written to {FT_WEIGHTS}\n")
+log_file.flush()  # Ensures it's written to disk immediately
+
+
+# ⏱️ End timer + print summary
+end_time = time.time()
+duration = end_time - start_time
+
+hours, rem = divmod(duration, 3600)
+minutes, seconds = divmod(rem, 60)
+
+print(f"⏱️ Total training time: {int(hours)} hours {int(minutes)} minutes {int(seconds)} seconds")   
+log_file.write(f"Total training time: {int(hours)} hours {int(minutes)} minutes {int(seconds)} seconds")
+log_file.flush()  
+
+log_file.close()

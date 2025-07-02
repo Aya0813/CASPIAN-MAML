@@ -1,5 +1,7 @@
 ################################################################################
 #      VERSION 2: where scenarios grouped into 5 tasks with each OLUs that behave the same way
+        # test 1 -> where 1 scenario ONLY from support/query set per task 
+        # test 2 -> where different random set of scenarios per support/query set per task 
 ################################################################################
 
 #!/usr/bin/env python
@@ -15,12 +17,46 @@ import tensorflow as tf
 import numpy as np
 import keras
 import cv2                                # for resizing 
+import random
+
 from datetime import datetime
 from models import CASPIANv2_MAML as new_models
 from collections import defaultdict # to use a special kind of dictionary where you don t have to check if a key already exists before adding to it
 
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Reduce TensorFlow logging
+
+# ─────────────────────────────────────────────────────────────────────
+#                               MAML HYPERPARAMS
+# ─────────────────────────────────────────────────────────────────────
+
+# to change before running the code
+PATCH_SIZE = 1024           # full image
+INNER_STEPS = 10            # increase to 10-20 to adapt meaningfully from a single full image
+INNER_LR = 0.0007      
+OUTER_LR = 0.00003 
+META_BATCH_SIZE = 5        # !!!!!! CRUTIAL in this case it is SET to 5 cause we have 5 task groups
+EPOCHS = 50                # 50 - 100 - watch convergence to avoid overfitting
+STEPS_PER_EPOCH = 25       # 20-40 - cause full image mem intensive
+
+# INITIAL TEST JUST TO SEE THAT IT WORKS - works :)) 
+# PATCH_SIZE = 1024        # Full image (still needed for model input shape)
+# INNER_STEPS = 1          # Just 1 inner loop update
+# INNER_LR = 0.0001        # Safe learning rate
+# OUTER_LR = 0.00001       # Conservative meta-learning rate
+# META_BATCH_SIZE = 1      # Just 1 support-query pair per meta-update
+# EPOCHS = 2               # Very short training run
+# STEPS_PER_EPOCH = 2      # Just 2 updates per epoch
+
+# SUPPORT_PATCHES and QUERY_PATCHES not used anymore
+
+# to change before running the code
+MODEL_NAME = "v2_test4"
+SAVE_DIR = f"./models/trained_models/aya/{MODEL_NAME}"
+
+log_file_path = f"{SAVE_DIR}/loss_log.txt"
+
+os.makedirs(SAVE_DIR, exist_ok=True) # Creates folder if needed
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -42,7 +78,14 @@ task_query = {i: [] for i in task_groups}          # query set = mostly protecte
 # now: task_support and task_query == { 1: [], 2: [], 3: [], 4: [], 5: [] } 
 
 used_scenarios = set () # a set is a list that only stores unique items and it's optimized for fast lookup
+
 max_per_set = 20 # max support/query set scenarios per task 
+
+
+# # Initialize your nested structure
+# data_store = {
+#     task_id: {'support': {}, 'query': {}} for task_id in task_groups
+# }
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -58,7 +101,6 @@ def hamming_distance (str1, str2):
 def non_focus_indices (focus_olus, total_olus):
     return [i for i in range (total_olus) if (i+1) not in focus_olus]
 # note: this is accounting for the fact that focus_olus is using 1-based numbering instead of python's 0-based numbering
-
 
 
 
@@ -96,36 +138,43 @@ def assign_scenario_to_task (f,x,y,yf):
     """
 
     f_str = f.numpy().decode('UTF-8')   # Convert file tensor to string 
-    print ("f_str is:", f_str)
+    print(f"\n Processing scenario: {f_str}")
 
     olu_binary = f_str.split ('_')[0]   # Extract 17-bit binary OLU string
+    total_olus = len(olu_binary)
 
-    # Extract the SLR value (e.g. 1.5m -> 1.5)
+    ######## Extract the SLR value (e.g. 1.5m -> 1.5) ########
     slr_var = 1.0 # Default value if parsing fails 
     match = re.search(r'_(\d+(\.\d+)?)m', f_str)    # Searches the filename for a pattern like _1.5m to extract the sea level rise value.
-
     if match:                                       # If a match is found, extracts the number (e.g., 1.5) and converts it to a float 
         slr_val = float(match.group(1)) 
+    print(f" Extracted SLR value: {slr_val}")
 
-
-    # Identify if the scenario is from AD or SF 
-    if len(olu_binary) == 30: 
+    ########          Identify region (AD or SF)     ##########
+    if total_olus == 30: 
         region_mask = sf_mask
-    elif len(olu_binary) == 17: 
+        print(" Region identified: San Francisco (SF)")
+    elif total_olus == 17: 
         region_mask = ad_mask
-
-    total_olus = len(olu_binary)
+        print(" Region identified: Abu Dhabi (AD)")
+    else 
+        print (f"Unknown OLU string length:{total_olus}, skipping scenario.")
+        return None, None, None, None
     
     ##### now we have the scneario's: olu_binary, slr_val, and region_mask #####
-    ##### goal -> assign this scnenario to a task's support set or query set ##### 
 
-
+    was_assigned = False # in order to track the status of each scenario (assigned to a support/query set or not)
+    
+    ##### goal -> assign this scenario to a task's support set or query set ##### 
     if f_str not in used_scenarios:
         # Loop over all tasks 
         for task_id, focus_olus in task_groups.items(): 
 
+            print(f" Trying to assign to task {task_id}...")
+
             # Skip to the next task if both support & query sets are full for this task 
-            if len(task_support[task_id])>= max_per_set and len(task_query[task_id]) >= max_per_set: 
+            if len(task_support[task_id])> max_per_set and len(task_query[task_id]) > max_per_set: 
+                print(f" Task {task_id} full → skipping.")
                 continue 
 
             # Count how many of the focus OLUs are protected 
@@ -140,7 +189,7 @@ def assign_scenario_to_task (f,x,y,yf):
             total_focus = len(focus_olus)                             # total_focus is the total number of focus OLUs per task
             non_focus_idx = non_focus_indices(focus_olus, total_olus) # Get indices of OLUs not part of this task's focus group 
             
-            # Decide which set we're assign the current scenario to 
+            # Decide target set (which set we're assigning the current scenario to) 
             if protected_count < total_focus / 2:       # meaning the majority of focus OLUs are unprotected 
                 target_set = task_support[task_id]      # append this scenario to the current task's support set 
                 target_label = "support"
@@ -149,10 +198,12 @@ def assign_scenario_to_task (f,x,y,yf):
                 target_set = task_query [task_id]       # append this scenario to the current task's query set
                 target_label = "query"
             else: 
+                print(f"↔ Equal protected/unprotected focus OLUs for task {task_id} → skipping.")
                 continue # if a scenario has protected=unprotected OLUs for the focus OLU of a task -> move to the next task  
 
+            print(f" Proposed for {target_label} set of task {task_id} (protected={protected_count}/{total_focus})")
 
-            if len (target_set)<max_per_set: 
+            if len (target_set) < max_per_set:   # if we have space in target_set (query set or support set) 
                 similar_enough = True # initialize (start optimistic)
                 for existing_fname in target_set:
                     existing_binary = existing_fname.split('_')[0]
@@ -165,15 +216,25 @@ def assign_scenario_to_task (f,x,y,yf):
                     # as long as there is similarity keep going 
                     if distance >= 2:
                         similar_enough = False 
+                        print(f" Dissimilar scenario found in {target_label} set (Hamming={distance}) → skipping task.")
                         break # stop when you find a scenario not similar to current focus scenario & move to next task 
                 
                 # if in target set all the scenarios are similar to the current scenario (similar_enough = True) append to target set
                 if similar_enough: 
                     target_set.append(f_str)
                     used_scenarios.add(f_str)
-                    break # successfully assigned the scenario, now move to next scenario
+                    print(f" Assigned to task {task_id} as {target_label} (Hamming matched)")
+                    was_assigned = True
+                    break # successfully assigned current scenario, now move to next 
             
-    # once the scenario is assigned to a task -> rest of the code - unchanged from original clear_ds () ####
+            else:
+                print(f" {target_label.capitalize()} set of task {task_id} is full.")
+                # automatically tries the next task_id
+    
+    if not was_assigned: 
+        print(f"WARNING: scenario {f_str} could not be assigned to any task.")
+    
+    ## once the scenario is assigned to a task -> rest of the code - unchanged from original clear_ds () ####
     
     x_np = x.numpy()
     y_np = y.numpy()
@@ -183,8 +244,6 @@ def assign_scenario_to_task (f,x,y,yf):
     y = tf.expand_dims(y, axis=-1)
 
     return x, y, region_mask, slr_val
-
-
 
 def map_fn(f, x, y, yf):
     """
@@ -220,6 +279,45 @@ def get_all_filenames_in_dataset(ds_path):
         all_filenames.add(fname)
     
     return all_filenames
+
+
+
+def get_sample_by_fname (ds, target_fname):             # function that leads to the CPU bottleneck
+    """
+    From loaded TF dataset 'ds', find and return x, y, region_mask, slr_val for a given filename. 
+    """
+    for f, x, y, region_mask, slr_val in ds: 
+        fname = f.numpy().decode("UTF-8")
+        if fname == target_fname: 
+            return x, y, region_mask, slr_val
+    raise ValueError(f"Scenario {target_fname} not found in dataset.")
+
+
+def load_scenarios_from_filenames (ds_train, fname_list):     
+    """
+    Given a list of filenames, return a stacked tensor of x and y, and slr (assume all SLRs are the same)
+    """
+
+    x_list, y_list = [], []                     # initialize 2 seperate empty lists
+    region_mask = None
+    slr_val = None
+
+    for fname in fname_list: 
+        x, y, region_mask, slr_val = get_sample_by_fname(ds_train, fname)   # shape: (1024, 1024, 1)
+
+        x = tf.expand_dims(x, axis=0)                                       # shape: (1, 1024, 1024, 1)
+        y = tf.expand_dims(y, axis=0)                                       # shape: (1, 1024, 1024, 1)
+
+        y_np = process_label_with_mask(y, region_mask)                      # shape: (1, 1024, 1024, 4)
+        y = tf.convert_to_tensor(y_np, dtype = tf.float32)
+
+        x_list.append(x)
+        y_list.append(y)
+    
+    x_tensor = tf.concat(x_list, axis = 0)                                  # shape: (N,1024,1024,1)
+    y_tensor = tf.concat(y_list, axis = 0)                                  # shape: (N,1024,1024,4)
+
+    return x_tensor, y_tensor, slr_val
 
 
 
@@ -378,53 +476,204 @@ class MAMLTrainer:
         """Apply accumulated gradients to meta-weights."""
         self.outer_optimizer.apply_gradients(zip(grads_accum, self.get_trainable_vars()))
 
+
+
 ################################################################################
 #                              MAIN TRAINING LOOP
 ################################################################################
 
 
 def main():
+    start_time = time.time()  # ⏱️ Start timer
+
+    print("TensorFlow version:", tf.__version__)
+    print("Keras version:", keras.__version__)
+    print("GPU available:", tf.test.is_gpu_available())
+
+    # 1) Load your CASPIAN model 
+    model = new_models.CASPIAN(
+        input_shape=(PATCH_SIZE, PATCH_SIZE, 1),  # 1024*1024 - full image
+        filters=72, input_centering=True,
+        depth=4, cardinality=34, activation='tanh',
+        bottleneck_depth=8, init="glorot_normal",
+        sup_level=1, compression_factor=0.85,
+        gr_level=4, slr_input=True
+    )
+
+    # Quick build: pass a dummy input
+    dummy_x = tf.zeros([1, PATCH_SIZE, PATCH_SIZE, 1], dtype=tf.float32)
+    dummy_slr = tf.zeros([1,1], dtype=tf.float32)
+    _ = model({"input_grid": dummy_x, "slr_input": dummy_slr}, training=False)
+    print(model.summary())
+
+    # 2) Initialize MAML trainer
+    maml = MAMLTrainer(
+        model=model,
+        inner_lr=INNER_LR,
+        outer_lr=OUTER_LR,
+        inner_steps=INNER_STEPS,
+        meta_batch_size=META_BATCH_SIZE
+    )
+
+    log_file = open(log_file_path, "w")  
+
+    # 3) dataset
     dataset_path = "./data/AD_slr_0.5m/train/FSL_MAML_AD_train_ds_aug_split_1"
 
-    # First collect all filenames in dataset (no repeat/shuffle here)
-    all_scenarios = get_all_filenames_in_dataset(dataset_path)
+    # for debugging only 
+    # all_scenarios = get_all_filenames_in_dataset(dataset_path) # First collect all filenames in dataset (no repeat/shuffle here)
+
+    ds_train = load_tf_dataset(dataset_path).prefetch(tf.data.AUTOTUNE) # note assignment logic happens inside assign_scenario_to_task function via map_fn
+    # .prefetch(tf.data.AUTOTUNE) to ensure the data loading is faster
 
 
-    ds_train = load_tf_dataset(dataset_path) 
-    # note assignment logic happens inside assign_scenario_to_task function via map_fn
+    #print("🔄 Building dataset lookup dictionary...")
+    #ds_lookup = build_dataset_lookup(ds_train)       
+    #print(f"✅ Dataset lookup built with {len(ds_lookup)} entries.")
 
-    
 
+
+    # # goes one by one through each scenario in the dataset -> where the task groups actually gets filled 
     for f, x, y, region_mask, slr_val in ds_train:
-        #break once all tasks are full 
+        # For every i in task_groups, check if both support and query sets of task i are full. 
         all_full = all(
-            len(task_support[i]) >= max_per_set and len(task_query[i]) >= max_per_set 
+            len(task_support[i]) == max_per_set and len(task_query[i]) == max_per_set 
             for i in task_groups
             )
-        if all_full:
-            break # get out of the for loop 
+
+        # Once every task has a full supprot set and query set, break the loop early 
+        if all_full: # if True get out of the for loop 
+            break
     
 
-    # Print how many scenarios each task got and list them 
-    for task_id in task_groups:
-        support_list = task_support[task_id]
-        query_list = task_query[task_id]
+    # ADD TO THE LOG files the files that ended up being used or not - create another log file just for logging the dataset?? 
+    
+    # Write experiment header
+    log_file.write("========================================\n")
+    log_file.write(f"Data used: {dataset_path}\n")
+    log_file.write(f"Model Name: {MODEL_NAME}\n")
+    log_file.write(f"PATCH_SIZE: {PATCH_SIZE}\n")
+    log_file.write(f"INNER_STEPS: {INNER_STEPS}\n")
+    log_file.write(f"INNER_LR: {INNER_LR}\n")
+    log_file.write(f"OUTER_LR: {OUTER_LR}\n")
+    log_file.write(f"META_BATCH_SIZE: {META_BATCH_SIZE}\n")
+    log_file.write(f"EPOCHS: {EPOCHS}\n")
+    log_file.write(f"STEPS_PER_EPOCH: {STEPS_PER_EPOCH}\n")
+    log_file.write(f"max_per_set: {max_per_set}\n")
+    log_file.write("========================================\n\n")
+    log_file.flush()
 
-        print (f"\n Task {task_id}:")
-        print (f"       -> {len(support_list)} support scenarios:")
-        for fname in support_list: 
-            print (f"           - {fname}")
+    ############ MAIN TRAINING LOOPS ################
 
-        
-        print (f"       -> {len(query_list)} query scenarios:")
-        for fname in query_list: 
-            print (f"           - {fname}")
+    epoch_losses = [] # added to track epoch loss
+    iteration = 0 
+    for epoch in range(EPOCHS):
+        meta_batch_losses = []
 
-    print (f"\n Total scenarios in dataset: {len(all_scenarios)}")
-    print (f"Used in task sets: {len(used_scenarios)}")
-    print (f"Unused: {len(all_scenarios - used_scenarios)}")
+        for step in range(STEPS_PER_EPOCH):
+            # accumulate grads across tasks in a meta-batch
+            grads_accum = None
+            task_count = 0
+
+            for task_id in range(META_BATCH_SIZE):
+
+                real_task_id = task_id + 1 # fix 0 based indexing 
+                
+
+                # RANDOMIZATION (TO DO INTRODUCE K AS A global variable - HYPER PARAMETER AS WELL!!! )
+                # support_fnames = random.sample(task_support[real_task_id], k=2)
+                # query_fnames = random.sample(task_query[real_task_id], k=2)
+
+                # support_fnames = task_support [real_task_id]        # shape: (number of scenarios, 1024, 1024, 1)
+                # query_fnames = task_query [real_task_id]            # shape: (number of scenarios, 1024, 1024, 1)
+
+                # random.shuffle(support_fnames)
+                # random.shuffle(query_fnames)
+
+                x_s, y_s, slr_val_s = load_scenarios_from_filenames(ds_train, support_fnames)
+                x_q, y_q, slr_val_q = load_scenarios_from_filenames(ds_train, query_fnames)
+                slr_tensor = tf.ones([x_q.shape[0], 1], dtype = tf.float32) * slr_val_q
+
+                # x -> (N, 1024, 1024, 1) and y -> (N, 1024, 1024, 4) (both x and y are tensors)
+
+                # IMPORTANT NOTEE: this code assumes SAME SLR - however - in case this code is used with scenarios with different SLR values 
+                # then the use of the split_TF_dataset_by_SLR.py is NECESSARY cause there cannot be a mismatch in training
+                
+                # Fast adapt
+                q_loss, grads_query = maml.fast_adapt(x_s, y_s, x_q, y_q, slr_tensor)
+
+                print ("post fast adapt")
+                meta_batch_losses.append(q_loss.numpy())
+
+                if grads_accum is None:
+                    grads_accum = grads_query
+                else:
+                    grads_accum = [ga + g for ga, g in zip(grads_accum, grads_query)]
+
+                print(f"Epoch {epoch+1} Step {step+1} Task {task_count+1} | q_loss: {q_loss.numpy():.4f}\n", flush=True) # added for tracking training progress
+
+                log_file.write(f"Epoch {epoch+1} Step {step+1} Task {task_count+1} | q_loss: {q_loss.numpy():.4f}\n")
+                log_file.flush()  # Ensures it's written to disk immediately
+
+                task_count += 1 # remember: the number of tasks is the META_BATCH_SIZE
+
+            print ("\n")
+            # after one meta-batch of tasks, average the grads & update
+            grads_accum = [g / task_count for g in grads_accum]
+            maml.meta_update(grads_accum)
+            
+            # update step loss
+            step_loss = np.mean(meta_batch_losses[-task_count:]) # 1 step = going through all tasks (which is one meta batch)
+            
+            # for tracking: print in terminal and save to log file 
+            print(f"Epoch {epoch+1} Step {step+1} | ⬅️ Meta-batch avg q_loss (step_loss): {step_loss:.4f}\n")
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_file.write(f"[{timestamp}] Epoch {epoch+1} Step {step+1} | step_loss: {step_loss:.4f}\n")
+            log_file.flush()  # Ensures it's written to disk immediately
+
+            iteration += 1 # updated for every STEPS_PER_EPOCH 
+
+        print ("\n")
+        # backpropagate
+        epoch_loss = np.mean(meta_batch_losses[-META_BATCH_SIZE*STEPS_PER_EPOCH:])
+
+        # for tracking: print in terminal and save to log file 
+        print(f"Epoch {epoch+1}/{EPOCHS}, epoch loss: {epoch_loss:.4f}")
+        print ("\n")
+        print ("\n")
+        log_file.write(f"Epoch {epoch+1}, Epoch Loss: {epoch_loss:.4f}\n")
+        log_file.flush()  # Ensures it's written to disk immediately
 
 
+        # optionally save checkpoint
+        # model.save_weights(os.path.join(SAVE_DIR, f"maml_epoch_{epoch+1}.h5"))
+
+    # final save
+    model.save_weights(os.path.join(SAVE_DIR, "final_maml_weights.h5"))
+    print("MAML Training Done!")
+
+    # ⏱️ End timer + print summary
+    end_time = time.time()
+    duration = end_time - start_time
+
+    hours, rem = divmod(duration, 3600)
+    minutes, seconds = divmod(rem, 60)
+
+    print(f"⏱️ Total training time: {int(hours)} hours {int(minutes)} minutes {int(seconds)} seconds")   
+    log_file.write(f"Total training time: {int(hours)} hours {int(minutes)} minutes {int(seconds)} seconds")
+    log_file.flush()  
+
+    #log_file.close()
 
 if __name__ == "__main__":
     main()
+
+
+# to avoid overfitting -> 2 strategies
+    #  Shuffle the support/query scenario order each time they're used
+    #  Sample a random subset of scenarios from each task 
+
+
+ # $ rsync -av C:\Users\ae2195\Desktop\MAML\data ae2195@jubail.abudhabi.nyu.edu:/scratch/ae2195/CASPIAN_MAML
+
+

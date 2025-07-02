@@ -10,3 +10,6 @@ __pycache__/
 
 /models/trained_models/
 
+# Ignore log files folder  
+/sbatch_output_files/
+

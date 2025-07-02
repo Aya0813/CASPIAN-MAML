@@ -34,17 +34,28 @@ from utilsSFAD import artae_score, delta_score, acc0   # <- already in your repo
 # MODEL_WEIGHTS    = "./models/trained_models/MAML_CASPIAN_patch/final_maml_weights_256.h5"
 # EVAL_DATASET     = "C:/NYUAD/CASPIAN/AregSF/data/FSL_MAML_AD_test_ds_split_1"
 
+print("Current working directory:", os.getcwd())
+print("AD Eval dataset exists?", os.path.exists("./data/AD_slr_0.5m/test/FSL_MAML_AD_test_ds_split_1"))
+print("SF Eval dataset exists?", os.path.exists("./data/SF_slr_1m/FSL_MAML_SF_test_ds_split_1"))
 
 # above code is the original - bellow is my code 
-# to change
 
-PATCH_SIZE       = 64
-MODEL_WEIGHTS    = "./models/trained_models/aya/CASPIAN_MAML_v1_test1_SF_FT/final_maml_ft_sf.h5"
-EVAL_DATASET     = "./data/AD_slr_0.5m/test/FSL_MAML_AD_test_ds_split_1"
+### to change 
+PATCH_SIZE          = 64
+MODEL_NAME          = "v1_test1_SF_FT_train_aug"
+###
 
-SAVE_PRED_DIR       = "./Results/CASPIAN_MAML_v1_test1_SF_FT/Predictions"
-SAVE_EXPL_IMG_DIR   = "./Results/CASPIAN_MAML_v1_test1_SF_FT/Explainability"
-SAVE_EXPL_NPY_DIR   = "./Results/CASPIAN_MAML_v1_test1_SF_FT/Explainability NPY"
+
+MODEL_WEIGHTS      = f"./models/trained_models/aya/CASPIAN_MAML_{MODEL_NAME}/final_maml.h5"
+AD_EVAL_DATASET    = "./data/AD_slr_0.5m/test/FSL_MAML_AD_test_ds_split_1"
+SF_EVAL_DATASET    = "./data/SF_slr_1m/FSL_MAML_SF_test_ds_split_1"
+
+SAVE_BASE_DIR      = f"./Results/MAML_CASPIAN_{MODEL_NAME}"
+SAVE_PRED_DIR      = f"{SAVE_BASE_DIR}/Predictions"
+SAVE_EXPL_IMG_DIR  = f"{SAVE_BASE_DIR}/Explainability"
+SAVE_EXPL_NPY_DIR  = f"{SAVE_BASE_DIR}/Explainability NPY"
+EXCEL_SAVE_PATH    = f"{SAVE_BASE_DIR}.xlsx"
+
 
 os.makedirs(SAVE_PRED_DIR,      exist_ok=True)
 os.makedirs(SAVE_EXPL_IMG_DIR,  exist_ok=True)
@@ -139,13 +150,13 @@ def patches_to_grid(patches, patch=PATCH_SIZE):
 #  Load masks (same routine you already have)
 # ──────────────────────────────────────────────────────────────────────────────
 def get_sf_mask():
-    d = np.load("./sf_full_grid_1024.npy", allow_pickle=True).item()
+    d = np.load("./data/mask/sf_full_grid_1024.npy", allow_pickle=True).item()
     m = np.zeros((1024,1024), bool)
     idx = np.array(list(d.values()))
     m[idx[:,0], idx[:,1]] = True
     return m.T
 def get_ad_mask():
-    d = np.load("./ad_full_grid_1024.npy", allow_pickle=True).item()
+    d = np.load("./data/mask/ad_full_grid_1024.npy", allow_pickle=True).item()
     m = np.zeros((1024,1024), bool)
     idx = np.array(list(d.values()))
     m[idx[:,0], idx[:,1]] = True
@@ -205,7 +216,15 @@ def map_eval(f,x,y,yf):
     )
 
 # Load the evaluation dataset from disk, then Apply the map function to each example using map_eval (which calls clear_ds_eval)
-ds_eval = tf.data.Dataset.load(EVAL_DATASET).map(map_eval).batch(1) # Group the dataset into batches of size 1 (i.e., 1 scenario at a time)
+
+# OG line changed to test SF as well instead of only AD
+# ds_eval = tf.data.Dataset.load(EVAL_DATASET).map(map_eval).batch(1) # Group the dataset into batches of size 1 (i.e., 1 scenario at a time)
+
+
+ad_eval_dataset = tf.data.Dataset.load(AD_EVAL_DATASET).map(map_eval)
+sf_eval_dataset = tf.data.Dataset.load(SF_EVAL_DATASET).map(map_eval)
+
+ds_eval = ad_eval_dataset.concatenate(sf_eval_dataset).batch(1) # Group the dataset into batches of size 1 (i.e., 1 scenario at a time)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Metric containers
@@ -264,8 +283,21 @@ for scenario_b, x_full_b, y_full_b, mask_b, slr_b in ds_eval:
     
     # valid_t and valid_p are 1D arrays, each with N values (only the masked locations).
 
+    # ─── Sanity checks before computing metrics ─────────────────────────────────
+    print(f"Scenario: {scenario}")
+    print(f"Region: {region}")
+    print(f"Valid True Min/Max: {valid_t.min() if valid_t.size else 'empty'} / {valid_t.max() if valid_t.size else 'empty'}")
+    print(f"Valid Pred Min/Max: {valid_p.min() if valid_p.size else 'empty'} / {valid_p.max() if valid_p.size else 'empty'}")
+    print(f"Valid count: {len(valid_t)}")  # number of valid pixels (where mask == True)
+
+
     # Store metrics
     def update(dic):
+        # for debugging
+        if len(valid_t) == 0 or len(valid_p) == 0:
+            print(f"⚠️ Warning: empty valid_t or valid_p for scenario {scenario}")
+
+
         dic['mae'].append( mean_absolute_error(valid_t, valid_p) )
         dic['rmse'].append(mean_squared_error(valid_t, valid_p))
         dic['r2'].append(  r2_score        (valid_t, valid_p) )
@@ -273,8 +305,28 @@ for scenario_b, x_full_b, y_full_b, mask_b, slr_b in ds_eval:
         dic['d05'].append( delta_score(np.array([valid_t]), np.array([valid_p]),0.5).mean())
         dic['d01'].append( delta_score(np.array([valid_t]), np.array([valid_p]),0.1).mean())
         dic['acc'].append(  acc0(np.array([valid_t]), np.array([valid_p])).mean())
-    region = 'sf' if len(scenario.split('.')[0])==30 else 'ad'
-    update(metrics[region]);  update(metrics['all'])
+
+
+    # region = 'sf' if len(scenario.split('.')[0])==30 else 'ad' # caused problems cause a scenario is 11111110111111111_0.5m.input.npy so should be _ 
+
+    prefix = scenario.split('_')[0]  # gets the part before the first "_"
+
+    if len(prefix) == 17:
+        region = "ad"
+        m = MASK_AD
+    elif len(prefix) == 30:
+        region = "sf"
+        m = MASK_SF
+    else:
+        print(f"⚠️ Could not determine region for scenario: {scenario}")
+        continue
+
+    #### 
+
+    update(metrics[region])
+    update(metrics['all'])
+
+
 
     # ─── Save prediction / label ────────────────────────────────────────────
     base = os.path.splitext(os.path.basename(scenario))[0]
@@ -331,7 +383,7 @@ def summarise (dic):
     for key in metric_keys:
         values = dic[key]               # list of values for this metric 
         mean_val = np.mean(values)      # compute mean 
-        std_val = np.syd(values)        # compute standard dev. 
+        std_val = np.std(values)        # compute standard dev. 
 
         # format the result as "mean +- std", rounded to 5 decimal places
         formatted = f"{mean_val:.5f} ±  {std_val:.5f}"
@@ -350,6 +402,5 @@ summary = pd.DataFrame({
 print("\n\n", summary, "\n")
 
 
-# to change
-summary.to_excel("./Results/MAML_CASPIAN_patch_v1_May22nd_full_hyper.xlsx", index=False)
-print("✓  Results written to /Results/MAML_CASPIAN_patch_v1_May22nd_full_hyper.xlsx")
+summary.to_excel(EXCEL_SAVE_PATH, index=False) # index = False means do not write the row numbers (DataFrame index) to the Excel file.
+print(f"✓  Results written to {EXCEL_SAVE_PATH}")
