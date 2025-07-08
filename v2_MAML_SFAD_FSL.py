@@ -8,7 +8,7 @@ Fine‑tune the previously MAML‑trained CASPIAN model on a *small* set of
 SF tasks.  We simply run a few more outer‑loop epochs where the meta‑batch
 is sampled **only from the SF TF‑Dataset** you prepared.
 """
-import os, sys, re, time
+import os, sys, re, time, pickle
 import tensorflow as tf
 import numpy as np
 import keras
@@ -30,19 +30,24 @@ from collections import defaultdict # to use a special kind of dictionary where 
 
 ### 
 # Part 1 to change before running the code
-## COUNT THE TIME AS WELL!! 
 
 MODEL_NAME = "v2_opt_test2"
-
-BASE_CHECKPOINT = f"./models/trained_models/aya/{MODEL_NAME}/final_maml_weights.h5"
-# SF_DATASET    = "./data/SF_slr_1m/FSL_MAML_SF_dataset"   # was using the full SF data 
-SF_DATASET      = "./data/SF_slr_1m/FSL_MAML_SF_train_ds_aug_split_1"   # now only using a section for training and the rest of teh data val & test 
+BASE_CHECKPOINT = f"./models/trained_models/aya/{MODEL_NAME}/final_maml_weights.h5"         
 
 
-OUT_DIR         = f"./models/trained_models/aya/{MODEL_NAME}/SF_FT"
+# OUT_DIR         = f"./models/trained_models/aya/{MODEL_NAME}/SF_FT"
+OUT_DIR         = f"./models/trained_models/aya/{MODEL_NAME}/SF_FT_data_loading"
 log_file_path   = f"{OUT_DIR}/loss_log.txt" 
 
 os.makedirs(OUT_DIR, exist_ok=True)
+
+# ───────────────────────────── Data ────────────────────────────────────────
+# was using the FULL SF data 
+# SF_DATASET    = "./data/SF_slr_1m/FSL_MAML_SF_dataset"   
+# now only using a section for training and the rest of the data val & test 
+SF_DATASET_TRAIN      = "./data/SF_slr_1m/FSL_MAML_SF_train_ds_aug_split_1"  
+SF_DATASET_VAL        = "./data/SF_slr_1m/FSL_MAML_SF_val_ds_aug_split_1"  
+
 
 # ───── Hyper‑params for **fine‑tuning**  (much smaller / shorter) ───────────
 # Part 2 to change before running the code
@@ -51,14 +56,17 @@ PATCH_SIZE       = 1024        # no change
 INNER_STEPS      = 5           # good balance
 INNER_LR         = 0.00002     # safe low LR
 OUTER_LR         = 0.000002    # stable meta updates
-META_BATCH_SIZE  = 5           # keep for 5 task groups
 
 FINETUNE_EPOCHS  = 20          # power of 2, quicker run
 STEPS_PER_EPOCH  = 10          # same, for ~256 total updates
 
+
+# data specific
+META_BATCH_SIZE  = 5           # keep for 5 task groups
 SUPPORT_K = 1
 QUERY_K = 1
-MAX_PER_SET = 20 # max support/query set scenarios per task 
+MAX_PER_SET = 5                # max support/query set scenarios per task 
+
 
 
 # Part 3 (final) to change before running the code
@@ -241,7 +249,6 @@ def load_tf_dataset(path):
     return tf.data.Dataset.load(path).map(map_fn)
 
 
-
 def build_dataset_lookup(ds_train):
     """
     Build a dictionary mapping filename → (x, y, region_mask, slr_val)
@@ -265,22 +272,21 @@ def prepare_batches (task_support, task_query, support_k, query_k):
     ]
 
     Arguments: 
-        task_support/task_query: set of all support/query scenarios for all tasks 
-        `supp_k`: how many support scenarios you use to adapt the model for a task.
-                i.e. The number of scenarios per batch in the support set (same for query)
+        task_support/task_query     : set of all support/query scenarios for all tasks 
+        support_k/query_k           : how many support scenarios you use to adapt the model for a task.
+                                    i.e. The number of scenarios per batch in the support set (same for query)
 
     Returns:
         task_batches: dict with task_id → list of (support_fnames, query_fnames)
     """ 
 
-    task_batches = {} # This wil stroe the final batches for each task 
+    task_batches = {} # This will store the final batches for each task 
 
     # Get only the task IDs that appear in BOTH support and query dicts 
     # this avoids erros if one dict is missing a task ID (for whatever reason we don t have all tasks filled)
     common_task_ids = set(task_support.keys()) & set(task_query.keys())
 
     print(f"Preparing batches for {len(common_task_ids)} tasks: {sorted(common_task_ids)}")  #  Track how many tasks we're processing
-
 
     # Loop through each valid task ID (sorted for consistent order)
     for task_id in sorted(common_task_ids):
@@ -520,93 +526,176 @@ maml = MAMLTrainer(model, INNER_LR, OUTER_LR, INNER_STEPS, META_BATCH_SIZE)
 
 # ───── SF fine‑tune dataset iterator (shuffled & repeated) ───────────────────
 
+####### initial implementation of version 2 (v2) #######
 # be careful -> Since we are trying to get 2 by 2 elements -> if the dataset has an odd number of samples, the final batch will only contain 1 sample
 # for this reason we are using drop_remainder=True as without that it was crashing
 # ds_sf = load_tf_dataset(SF_DATASET).shuffle(50,reshuffle_each_iteration=True).batch(2, drop_remainder=True).repeat() # og line 
 ## new line for fasting data handling 
+########################################################
 
+
+# ─────────────────── SF fine‑tune dataset iterator (shuffled & repeated) ───────────────────
 
 # 3) dataset
-ds_train = load_tf_dataset (SF_DATASET) 
 
-print("🔄 Building dataset lookup dictionary...")
-ds_lookup = build_dataset_lookup (ds_train)
-print(f"✅ Dataset lookup built with {len(ds_lookup)} entries.")     
+######################### training data #########################
 
-task_batches = prepare_batches (task_support, task_query, support_k = SUPPORT_K, query_k = QUERY_K)
-tensor_batches = build_tensor_batches (ds_lookup, task_batches)  # full x/y tensors pre loaded
+filename_train_data = f"./data/batched_data/SF/train_tensor_batches_SUPPORT_K{SUPPORT_K}_QUERY_K{QUERY_K}.pkl" # reason behind the naming: since MAML AD training code and the data batching depends on SUPPORT_K and QUERY_K
 
+if os.path.exists(filename_train_data):          
+    with open(filename_train_data, "rb") as f: # rb: open the file for Reading Binary data 
+        tensor_batches_train = pickle.load(f)
+    print (f"Loaded tensor_batches from {filename_train_data}") # why pickle? -> Works with any Python object, including nested dictionaries of NumPy arrays or TensorFlow tensors + Doesn't require converting to strings, JSON, or a TF format
+
+
+else: # if the file does not exist then do the data batching
+
+    # Loading & batching the TRAINING data & savint to disk
+    ds_train = load_tf_dataset (SF_DATASET_TRAIN) 
+    print("🔄 Building dataset lookup dictionary for the training data...")
+    ds_lookup_train = build_dataset_lookup (ds_train)
+    print(f"✅ Dataset lookup built with {len(ds_lookup_train)} entries.")     
+    task_batches_train = prepare_batches (task_support, task_query, support_k = SUPPORT_K, query_k = QUERY_K)
+    tensor_batches_train = build_tensor_batches (ds_lookup_train, task_batches_train)  # full x/y tensors pre loaded
+
+    # make the folder exists before saving 
+    os.makedirs(os.path.dirname(filename_train_data), exist_ok = True)
+
+    with open(filename_train_data, "wb") as f: 
+        pickle.dump(tensor_batches_train, f)
+    
+    print (f"Saved tensor_batches to {filename_train_data}") 
+
+
+
+######################### Validation data #########################
+
+filename_val_data = f"./data/batched_data/SF/val_tensor_batches_SUPPORT_K{SUPPORT_K}_QUERY_K{QUERY_K}.pkl" # reason behind the naming: since MAML AD Validation code and the data batching depends on SUPPORT_K and QUERY_K
+
+if os.path.exists(filename_val_data):          
+    with open(filename_val_data, "rb") as f: # rb: open the file for Reading Binary data 
+        tensor_batches_val = pickle.load(f)
+    print (f"Loaded tensor_batches from {filename_val_data}") # why pickle? -> Works with any Python object, including nested dictionaries of NumPy arrays or TensorFlow tensors + Doesn't require converting to strings, JSON, or a TF format
+
+
+else: # if the file does not exist then do the data batching
+
+    # Loading & batching the VALIDATION data & savint to disk
+    ds_val = load_tf_dataset (SF_DATASET_VAL) 
+    print("🔄 Building dataset lookup dictionary for the validation data...")
+    ds_lookup_val = build_dataset_lookup (ds_val)
+    print(f"✅ Dataset lookup built with {len(ds_lookup_val)} entries.")     
+    task_batches_val = prepare_batches (task_support, task_query, support_k = SUPPORT_K, query_k = QUERY_K)
+    tensor_batches_val = build_tensor_batches (ds_lookup_val, task_batches_val)  # full x/y tensors pre loaded
+
+    # make the folder exists before saving 
+    os.makedirs(os.path.dirname(filename_val_data), exist_ok = True)
+
+    with open(filename_val_data, "wb") as f: 
+        pickle.dump(tensor_batches_val, f)
+    
+    print (f"Saved tensor_batches to {filename_val_data}") 
+
+
+# # ───────────── Log Experiment Setup ────────────────────────────────────────
 
 log_file = open(log_file_path, "w")  
 
 # Write experiment header
 log_file.write("========================================\n")
-log_file.write(f"Data used: {SF_DATASET}\n")
-log_file.write(f"Base checkpoint path: {BASE_CHECKPOINT}\n")
-log_file.write(f"EXPERIMENT_NOTE: {EXPERIMENT_NOTE}\n\n")
+
+log_file.write("============   DATA   ============\n")
+log_file.write(f"Data path: {SF_DATASET}\n")
+log_file.write(f"Data used for training: {len(ds_lookup_train)}\n")
+log_file.write(f"Data used for validation: {len(ds_lookup_val)}\n")
+
 
 log_file.write(f"PATCH_SIZE: {PATCH_SIZE}\n")
-log_file.write(f"INNER_STEPS: {INNER_STEPS}\n")
-log_file.write(f"INNER_LR: {INNER_LR}\n")
-log_file.write(f"OUTER_LR: {OUTER_LR}\n")
 log_file.write(f"META_BATCH_SIZE: {META_BATCH_SIZE}\n")
-log_file.write(f"FINETUNE_EPOCHS: {FINETUNE_EPOCHS}\n")
-log_file.write(f"STEPS_PER_EPOCH: {STEPS_PER_EPOCH}\n")
+
 log_file.write(f"SUPPORT_K: {SUPPORT_K}\n")
 log_file.write(f"QUERY_K: {QUERY_K}\n")
 log_file.write(f"MAX_PER_SET: {MAX_PER_SET}\n")
+
+
+log_file.write("============   MODEL   ============\n")
+log_file.write(f"Base checkpoint path: {BASE_CHECKPOINT}\n")
+
+
+log_file.write("============   TRAINING   ============\n")
+log_file.write(f"INNER_STEPS: {INNER_STEPS}\n")
+log_file.write(f"INNER_LR: {INNER_LR}\n")
+log_file.write(f"OUTER_LR: {OUTER_LR}\n")
+log_file.write(f"FINETUNE_EPOCHS: {FINETUNE_EPOCHS}\n")
+log_file.write(f"STEPS_PER_EPOCH: {STEPS_PER_EPOCH}\n")
+
+
+log_file.write(f"EXPERIMENT_NOTE: {EXPERIMENT_NOTE}\n\n")
 log_file.write("========================================\n\n")
 log_file.flush()
 
-# ───── Fine‑tuning loop (few epochs) ────────────────────────────────────────
+# ─────────────── Fine‑tuning loop (few epochs) ────────────────────────────────────────
 
-batch_indices = {task_id: 0 for task_id in tensor_batches} # we need a separate index per task, since each task rotates through its own batches.
 
-for epoch in range(FINETUNE_EPOCHS):
-    losses = []
-    for step in range(STEPS_PER_EPOCH):
-        acc_g, n = None, 0
-        for task_id in range(META_BATCH_SIZE):
+# best_val_loss = float("inf")        # initialized as a very big number (to ensure that we always keep improving)
+# batch_indices = {task_id: 0 for task_id in tensor_batches_train} # we need a separate index per task, since each task rotates through its own batches.
 
-            real_task_id = task_id + 1 # fix 0 based indexing 
-            batch_index = batch_indices[real_task_id]
+# for epoch in range(FINETUNE_EPOCHS):
+#     losses = []
+#     for step in range(STEPS_PER_EPOCH):
+#         acc_g, n = None, 0
+#         for task_id in range(META_BATCH_SIZE):
 
-            # fetch batch 
-            x_s, y_s, x_q, y_q, slr_tensor = tensor_batches[real_task_id][batch_index]
+#             real_task_id = task_id + 1 # fix 0 based indexing 
+#             batch_index = batch_indices[real_task_id]
+
+#             # fetch batch 
+#             x_s, y_s, x_q, y_q, slr_tensor = tensor_batches_train[real_task_id][batch_index]
             
-            # update index 
-            batch_indices[real_task_id] = (batch_index + 1) % len (tensor_batches[real_task_id])
+#             # update index 
+#             batch_indices[real_task_id] = (batch_index + 1) % len (tensor_batches_train[real_task_id])
 
-            # x -> (N, 1024, 1024, 1) and y -> (N, 1024, 1024, 4) (both x and y are tensors)
+#             # x -> (N, 1024, 1024, 1) and y -> (N, 1024, 1024, 4) (both x and y are tensors)
 
-            qloss,g = maml.fast(x_s,y_s,x_q,y_q,slr_tensor)
+#             qloss,g = maml.fast(x_s,y_s,x_q,y_q,slr_tensor)
 
-            print(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, Step {step+1}/{STEPS_PER_EPOCH}, Task {n+1}/{META_BATCH_SIZE}, query-loss: {qloss:.4f}")
-            log_file.write(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, Step {step+1}/{STEPS_PER_EPOCH}, Task {n+1}/{META_BATCH_SIZE}, query-loss: {qloss:.4f}")
-            log_file.flush()  # Ensures it's written to disk immediately
+#             print(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, Step {step+1}/{STEPS_PER_EPOCH}, Task {n+1}/{META_BATCH_SIZE}, query-loss: {qloss:.4f}")
+#             log_file.write(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, Step {step+1}/{STEPS_PER_EPOCH}, Task {n+1}/{META_BATCH_SIZE}, query-loss: {qloss:.4f}")
+#             log_file.flush()  # Ensures it's written to disk immediately
 
-            losses.append(qloss.numpy())
+#             losses.append(qloss.numpy())
 
-            if acc_g is None: 
-                acc_g=g
-            else:             
-                acc_g=[a+b for a,b in zip(acc_g,g)]
+#             if acc_g is None: 
+#                 acc_g=g
+#             else:             
+#                 acc_g=[a+b for a,b in zip(acc_g,g)]
             
-            n+=1  # in the main training code this is task_count
+#             n+=1  # in the main training code this is task_count
 
-        acc_g=[g/n for g in acc_g]
-        maml.meta_update(acc_g)
+#         acc_g=[g/n for g in acc_g]
+#         maml.meta_update(acc_g)
 
-    print(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, mean query-loss: {np.mean(losses):.4f}")
-    log_file.write(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, mean query-loss: {np.mean(losses):.4f}")
-    log_file.flush()  # Ensures it's written to disk immediately
+#     print(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, mean query-loss: {np.mean(losses):.4f}")
+#     log_file.write(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, mean query-loss: {np.mean(losses):.4f}")
+#     log_file.flush()  # Ensures it's written to disk immediately
 
-# ───── Save fine‑tuned weights ──────────────────────────────────────────────
-FT_WEIGHTS = os.path.join(OUT_DIR, "final_maml_ft_sf.h5")
-model.save_weights(FT_WEIGHTS)
-print("✓  fine‑tuned weights written to", FT_WEIGHTS)
-log_file.write(f"fine‑tuned weights written to {FT_WEIGHTS}\n")
-log_file.flush()  # Ensures it's written to disk immediately
+
+#     # ───── ───── ───── ───── Evaluation on Validation Set ───── ───── ───── ───── 
+#     val_losses = []
+
+#     for task_id in val_batches: 
+#         for x_s, y_s, x_q, 
+
+
+
+
+
+# # ───── Save fine‑tuned weights ──────────────────────────────────────────────
+# FT_WEIGHTS = os.path.join(OUT_DIR, "final_maml_ft_sf.h5")
+# model.save_weights(FT_WEIGHTS)
+# print("✓  fine‑tuned weights written to", FT_WEIGHTS)
+# log_file.write(f"fine‑tuned weights written to {FT_WEIGHTS}\n")
+# log_file.flush()  # Ensures it's written to disk immediately
 
 
 # ⏱️ End timer + print summary

@@ -1,7 +1,6 @@
 ################################################################################
 #      VERSION 1: where support set -> 1 scenario && query set -> 1 scenario
-################################################################################
-
+################################################################################ 
 
 #!/usr/bin/env python
 # coding: utf-8
@@ -349,7 +348,7 @@ def main():
     log_file.write(f"STEPS_PER_EPOCH: {STEPS_PER_EPOCH}\n")
     log_file.write("========================================\n\n")
     log_file.flush()
-
+' '
     epoch_losses = [] # added to track epoch loss
     iteration = 0 
     for epoch in range(EPOCHS):

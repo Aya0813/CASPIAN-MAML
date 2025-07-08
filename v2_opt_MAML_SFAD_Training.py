@@ -58,7 +58,7 @@
 #                   Import necessary libraries
 # ─────────────────────────────────────────────────────────────────────
 
-import os, sys, re, time
+import os, sys, re, time, pickle
 import tensorflow as tf
 import numpy as np
 import keras
@@ -76,15 +76,16 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Reduce TensorFlow logging
 #                               MAML HYPERPARAMS
 # ─────────────────────────────────────────────────────────────────────
 
-# to change before running the code
+# to change before running the code -> Hyperparameters bellow 
 PATCH_SIZE = 1024           # full image
 INNER_STEPS = 4             # increase to 10-20 to adapt meaningfully from a single full image
 INNER_LR = 0.0007      
 OUTER_LR = 0.00003 
-META_BATCH_SIZE = 5          # !!!!!! CRUTIAL in this case it is SET to 5 cause we have 5 task groups
 EPOCHS = 128                 # 50 - 100 - watch convergence to avoid overfitting
 STEPS_PER_EPOCH = 64        # 20-40 - cause full image mem intensive
 
+# data specific
+META_BATCH_SIZE = 5          # !!!!!! CRUTIAL in this case it is SET to 5 cause we have 5 task groups
 SUPPORT_K = 2 
 QUERY_K = 2
 MAX_PER_SET = 20 # max support/query set scenarios per task 
@@ -98,11 +99,11 @@ MAX_PER_SET = 20 # max support/query set scenarios per task
 # META_BATCH_SIZE = 1      # Just 1 support-query pair per meta-update
 # EPOCHS = 2               # Very short training run
 # STEPS_PER_EPOCH = 2      # Just 2 updates per epoch
-
 # SUPPORT_PATCHES and QUERY_PATCHES not used anymore
 
-# to change before running the code
-MODEL_NAME = "v2_opt_flipped_t1"
+
+# to change before running the code -> MODEL_NAME and EXPERIMENT_NOTE
+MODEL_NAME = "v2_opt_data_loading_opt"
 # EXPERIMENT_NOTE = (
 #     "Main changes: "
 #     "Testing upper-bound limits of model adaptation using full-resolution inputs, longer inner loops, "
@@ -114,17 +115,11 @@ MODEL_NAME = "v2_opt_flipped_t1"
 # )
 
 EXPERIMENT_NOTE = (
-    "Experiment flipping the support/query assignment logic during task construction. "
-    "Originally, support sets contained scenarios where the majority of focus OLUs were unprotected, "
-    "and query sets had majority protected OLUs. In this setup, the logic is reversed: "
-    "support sets now contain scenarios with mostly protected OLUs, and query sets contain mostly unprotected ones. "
-    "This tests whether reversing the adaptation direction affects MAML's ability to generalize across protection configurations."
+    "testing whether data loading stored to the disk works"
 )
 
 SAVE_DIR = f"./models/trained_models/aya/{MODEL_NAME}"
-
 log_file_path = f"{SAVE_DIR}/loss_log.txt"
-
 os.makedirs(SAVE_DIR, exist_ok=True) # Creates folder if needed
 
 
@@ -190,6 +185,7 @@ ad_mask = get_ad_mask()
 #       Main function that groups a scenario into the right task
 # ─────────────────────────────────────────────────────────────────────
 
+
 def assign_scenario_to_task (f,x,y,yf): 
     """
     Assigns a scenario to the support or query set of each task  
@@ -217,7 +213,7 @@ def assign_scenario_to_task (f,x,y,yf):
         region_mask = ad_mask
         print(" Region identified: Abu Dhabi (AD)")
     else: 
-        print (f"Unknown OLU string length:{total_olus}, skipping scenario.")
+        print(f"Unknown OLU string length:{total_olus}, skipping scenario.")
         return None, None, None, None
     
     ##### now we have the scneario's: olu_binary, slr_val, and region_mask #####
@@ -249,13 +245,13 @@ def assign_scenario_to_task (f,x,y,yf):
             non_focus_idx = non_focus_indices(focus_olus, total_olus) # Get indices of OLUs not part of this task's focus group 
             
             # Decide target set (which set we're assigning the current scenario to) 
-            #if protected_count < total_focus / 2:       # meaning the majority of focus OLUs are unprotected 
-            if protected_count > total_focus / 2:        # flipped just for experimentation 
+            if protected_count < total_focus / 2:       # meaning the majority of focus OLUs are unprotected 
+            #if protected_count > total_focus / 2:        # flipped just for experimentation 
                 target_set = task_support[task_id]      # append this scenario to the current task's support set 
                 target_label = "support"
             
-            #elif protected_count > total_focus / 2:     # meaning protected OLUs are the majority 
-            elif protected_count < total_focus / 2:      # flipped just for experimentation 
+            elif protected_count > total_focus / 2:     # meaning protected OLUs are the majority 
+            #elif protected_count < total_focus / 2:      # flipped just for experimentation 
 
                 target_set = task_query [task_id]       # append this scenario to the current task's query set
                 target_label = "query"
@@ -700,32 +696,68 @@ def main():
 
     # 3) dataset
     dataset_path = "./data/AD_slr_0.5m/train/FSL_MAML_AD_train_ds_aug_split_1"
-    ds_train = load_tf_dataset (dataset_path) 
+    filename = f"./data/batched_data/AD/train_tensor_batches_SUPPORT_K{SUPPORT_K}_QUERY_K{QUERY_K}.pkl" # reason behind the naming: since MAML AD training code and the data batching depends on SUPPORT_K and QUERY_K
 
-    print("🔄 Building dataset lookup dictionary...")
-    ds_lookup = build_dataset_lookup (ds_train)
-    print(f"✅ Dataset lookup built with {len(ds_lookup)} entries.")     
 
-    task_batches = prepare_batches (task_support, task_query, support_k = SUPPORT_K, query_k = QUERY_K)
-    tensor_batches = build_tensor_batches (ds_lookup, task_batches)  # full x/y tensors pre loaded
+    if os.path.exists(filename):          
+        with open(filename, "rb") as f: # rb: open the file for Reading Binary data 
+            tensor_batches = pickle.load(f)
+        print (f"Loaded tensor_batches from {filename}") # why pickle? -> Works with any Python object, including nested dictionaries of NumPy arrays or TensorFlow tensors + Doesn't require converting to strings, JSON, or a TF format
+
+    else: # if the file does not exist then do the data batching
+        ds_train = load_tf_dataset (dataset_path) 
+        print("🔄 Building dataset lookup dictionary...")
+        ds_lookup = build_dataset_lookup (ds_train)
+        print(f"✅ Dataset lookup built with {len(ds_lookup)} entries.")
+
+        task_batches = prepare_batches (task_support, task_query, support_k = SUPPORT_K, query_k = QUERY_K)
+        tensor_batches = build_tensor_batches (ds_lookup, task_batches)  # full x/y tensors pre loaded
+
+        # make the folder exists before saving 
+        os.makedirs(os.path.dirname(filename), exist_ok = True)
+
+        with open(filename, "wb") as f: 
+            pickle.dump(tensor_batches, f)
+        
+        print (f"Saved tensor_batches to {filename}")
+
+
+    # ───────────── Log Experiment Setup ───────────────────
 
     # Write experiment header
     log_file.write("========================================\n")
-    log_file.write(f"Data used: {dataset_path}\n")
-    log_file.write(f"Model Name: {MODEL_NAME}\n")
-    log_file.write(f"EXPERIMENT_NOTE: {EXPERIMENT_NOTE}\n")
+
+    log_file.write("============   DATA   ============\n")
+    log_file.write(f"Data path: {dataset_path}\n")
+    log_file.write(f"Data used for training: {len(ds_lookup)}\n")
+
+
     log_file.write(f"PATCH_SIZE: {PATCH_SIZE}\n")
-    log_file.write(f"INNER_STEPS: {INNER_STEPS}\n")
-    log_file.write(f"INNER_LR: {INNER_LR}\n")
-    log_file.write(f"OUTER_LR: {OUTER_LR}\n")
     log_file.write(f"META_BATCH_SIZE: {META_BATCH_SIZE}\n")
-    log_file.write(f"EPOCHS: {EPOCHS}\n")
-    log_file.write(f"STEPS_PER_EPOCH: {STEPS_PER_EPOCH}\n")
+
     log_file.write(f"SUPPORT_K: {SUPPORT_K}\n")
     log_file.write(f"QUERY_K: {QUERY_K}\n")
     log_file.write(f"MAX_PER_SET: {MAX_PER_SET}\n")
+
+
+    log_file.write("============   MODEL   ============\n")
+    log_file.write(f"Base checkpoint path: {BASE_CHECKPOINT}\n")
+
+
+    log_file.write("============   TRAINING   ============\n")
+    log_file.write(f"INNER_STEPS: {INNER_STEPS}\n")
+    log_file.write(f"INNER_LR: {INNER_LR}\n")
+    log_file.write(f"OUTER_LR: {OUTER_LR}\n")
+    log_file.write(f"EPOCHS: {EPOCHS}\n")
+    log_file.write(f"STEPS_PER_EPOCH: {STEPS_PER_EPOCH}\n")
+
+
+    log_file.write(f"EXPERIMENT_NOTE: {EXPERIMENT_NOTE}\n\n")
     log_file.write("========================================\n\n")
     log_file.flush()
+
+    # ──────────────────────────────────────────────────────────
+
 
     ############ MAIN TRAINING LOOPS ################
 
@@ -755,7 +787,7 @@ def main():
                 # Fast adapt
                 q_loss, grads_query = maml.fast_adapt(x_s, y_s, x_q, y_q, slr_tensor)
 
-                print ("post fast adapt")
+                # print ("post fast adapt") # for debugging
                 meta_batch_losses.append(q_loss.numpy())
 
                 if grads_accum is None:
@@ -775,7 +807,7 @@ def main():
             grads_accum = [g / task_count for g in grads_accum]
             maml.meta_update(grads_accum)
             
-            # update step loss
+            # update step loss (average query loss over all tasks in this meta-batch)
             step_loss = np.mean(meta_batch_losses[-task_count:]) # 1 step = going through all tasks (which is one meta batch)
             
             # for tracking: print in terminal and save to log file 
@@ -787,8 +819,11 @@ def main():
             iteration += 1 # updated for every STEPS_PER_EPOCH 
 
         print ("\n")
+
         # backpropagate
-        epoch_loss = np.mean(meta_batch_losses[-META_BATCH_SIZE*STEPS_PER_EPOCH:])
+        epoch_loss = np.mean(meta_batch_losses[-META_BATCH_SIZE*STEPS_PER_EPOCH:]) # Computes the mean query loss across all meta-batches (steps × tasks) for the epoch
+        epoch_losses.append(epoch_loss) # to store epoch-wise loss for plotting 
+
 
         # for tracking: print in terminal and save to log file 
         print(f"Epoch {epoch+1}/{EPOCHS}, epoch loss: {epoch_loss:.4f}")
