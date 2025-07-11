@@ -198,7 +198,7 @@ metrics = {
 # ──────────────────────────────────────────────────────────────────────────────
 #  Evaluation loop
 # ──────────────────────────────────────────────────────────────────────────────
-# ─── inside the evaluation loop ──────────────────────────────────────────
+
 
 for scenario_b, x_full_b, y_full_b, mask_b, slr_b in ds_eval:
     # scenario_b ->     shape == (1,) and dtype == byte‑string
@@ -226,7 +226,7 @@ for scenario_b, x_full_b, y_full_b, mask_b, slr_b in ds_eval:
         "slr_input":slr_input}, 
         verbose=0)                                      # shape: (1, 1024, 1024, 1)
     
-    pred_grid = preds_full[0,:,:,0]                       # shape: (1024, 1024)
+    pred_grid = preds_full[0,:,:,0]                     # shape: (1024, 1024)
 
     # Prepare label channels for un‑normalisation
     # ─── extract 2‑D arrays and mask them ──────────────────────────────────

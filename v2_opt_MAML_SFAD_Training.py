@@ -1,50 +1,4 @@
 
-## ds_train = load_tf_dataset (dataset_path)      
-## ds_lookup = build_dataset_lookup (ds_train)
-## task_batches = prepare_batches (task_support, task_query, K, supp_k, query_k)
-## tensor_batches = build_tensor_batches (ds_lookup, task_batches)  # full x/y tensors pre loaded
-
-
-## training for loops 
-
-    ## x_s, y_s, x_q, y_q, slr_tensor = tensor_batches [real_task_id][batch_index]
-    ## batch_index = (batch_index + 1) % len (task_batches[real_task_id])
-    ## then rest of the training loop... 
-
-
-# def build_dataset_lookup(ds_train):
-#     """
-#     Build a dictionary mapping filename → (x, y, region_mask, slr_val)
-#     """
-#     lookup = {}
-#     for f, x, y, region_mask, slr_val in ds_train:
-#         fname = f.numpy().decode("UTF-8")
-#         lookup[fname] = (x, y, region_mask, slr_val)
-#     return lookup
-    
-# def prepare_batches(task_support, task_query, K, supp_k, query_k):
-#     task_batches = {}
-#     for task_id in task_support:
-#         task_batches[task_id] = []
-#         for _ in range(K):
-#             s = random.sample(task_support[task_id], supp_k)
-#             q = random.sample(task_query[task_id], query_k)
-#             task_batches[task_id].append((s, q))
-#     return task_batches
-
-# def load_scenarios_from_filenames(lookup_dict, fname_list):
-#     x_list, y_list = [], []
-#     for fname in fname_list:
-#         x, y, region_mask, slr_val = get_sample_by_fname_from_dict(lookup_dict, fname)
-#         x = tf.expand_dims(x, axis=0)
-#         y = tf.expand_dims(y, axis=0)
-#         y_np = process_label_with_mask(y, region_mask)
-#         y = tf.convert_to_tensor(y_np, dtype=tf.float32)
-#         x_list.append(x)
-#         y_list.append(y)
-#     x_tensor = tf.concat(x_list, axis=0)
-#     y_tensor = tf.concat(y_list, axis=0)
-#     return x_tensor, y_tensor, slr_val
 
 ################################################################################
 #      VERSION 2 OPTIMIZED: where scenarios grouped into 5 tasks with each OLUs that behave the same way
@@ -140,6 +94,7 @@ task_groups = {  # Type: dict[int, list[int]]
 task_support = {i: [] for i in task_groups}        # support set = mostly unprotected focus OLUs
 task_query = {i: [] for i in task_groups}          # query set = mostly protected focus OLUs
 # now: task_support and task_query == { 1: [], 2: [], 3: [], 4: [], 5: [] } 
+
 
 used_scenarios = set () # a set is a list that only stores unique items and it's optimized for fast lookup
 # ─────────────────────────────────────────────────────────────────────
@@ -710,7 +665,7 @@ def main():
         ds_lookup = build_dataset_lookup (ds_train)
         print(f"✅ Dataset lookup built with {len(ds_lookup)} entries.")
 
-        task_batches = prepare_batches (task_support, task_query, support_k = SUPPORT_K, query_k = QUERY_K)
+        task_batches = prepare_batches (task_support = task_support, task_query, support_k = SUPPORT_K, query_k = QUERY_K)
         tensor_batches = build_tensor_batches (ds_lookup, task_batches)  # full x/y tensors pre loaded
 
         # make the folder exists before saving 

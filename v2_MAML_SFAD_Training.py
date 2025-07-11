@@ -64,12 +64,12 @@ os.makedirs(SAVE_DIR, exist_ok=True) # Creates folder if needed
 # ─────────────────────────────────────────────────────────────────────
 
 
-task_groups = {  # Type: dict[int, list[int]]
-    1: [3,4,5,6],           # task 1 includes OLUs 3,4,5,6 
-    2: [7,17,2,10,1],       # task 2 includes OLUs 7,17,etc. 
-    3: [8,9], 
-    4: [11, 12, 13, 14], 
-    5: [16,15]
+task_groups = {
+    1: [3, 4, 5, 6],            # Task 1: OLUs 3–6
+    2: [7, 17, 2, 10, 1],       # Task 2: OLUs 1, 2, 7, 10, 17
+    3: [8, 9],                  # Task 3: OLUs 8 and 9
+    4: [11, 12, 13, 14],        # Task 4: OLUs 11–14
+    5: [16, 15]                 # Task 5: OLUs 15 and 16
 }
 
 # create a dictionary where each key is a task ID from task_groups and each value is an empty list which will store filenames for the support/query set of that task 

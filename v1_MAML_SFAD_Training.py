@@ -438,7 +438,7 @@ def main():
         print ("\n")
         print ("\n")
         log_file.write(f"Epoch {epoch+1}, Epoch Loss: {epoch_loss:.4f}\n")
-        log_file.flush()  # Ensures it's written to disk immediately
+        log_file.flush()  # Ensures it's written to disk immediately 
 
 
         # optionally save checkpoint

@@ -31,15 +31,17 @@ from collections import defaultdict # to use a special kind of dictionary where 
 ### 
 # Part 1 to change before running the code
 
-MODEL_NAME = "v2_opt_test2"
+MODEL_NAME = "v2_opt_test1"
 BASE_CHECKPOINT = f"./models/trained_models/aya/{MODEL_NAME}/final_maml_weights.h5"         
 
+OUT_DIR = f"./models/trained_models/aya/{MODEL_NAME}/SF_FT_with_val"
+log_dir = os.path.join(OUT_DIR, "logs")
+log_file_path = os.path.join(log_dir, "train_log.txt")      # to log all training parameters
+log_file_path_val = os.path.join(log_dir, "val_log.txt")    # to log all validation parameters
 
-# OUT_DIR         = f"./models/trained_models/aya/{MODEL_NAME}/SF_FT"
-OUT_DIR         = f"./models/trained_models/aya/{MODEL_NAME}/SF_FT_data_loading"
-log_file_path   = f"{OUT_DIR}/loss_log.txt" 
+# Ensure the logs directory exists
+os.makedirs(log_dir, exist_ok=True)
 
-os.makedirs(OUT_DIR, exist_ok=True)
 
 # ───────────────────────────── Data ────────────────────────────────────────
 # was using the FULL SF data 
@@ -70,12 +72,7 @@ MAX_PER_SET = 5                # max support/query set scenarios per task
 
 
 # Part 3 (final) to change before running the code
-EXPERIMENT_NOTE = (
-    "Divide the 30 OLUs into 5 groups (6 OLUs each) by index" 
-    "Treat each group as a task → just like in AD"
-    "Then reuse your entire MAML logic: assign_scenario_to_task, batching, tensor loading, etc."
-)
-
+EXPERIMENT_NOTE = ("Now validation setup working (first test was using v2_opt_test2), in this run specifically I changed the OLU groupings according to the found literature.")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -84,19 +81,21 @@ EXPERIMENT_NOTE = (
 
 
 task_groups = {  # Type: dict[int, list[int]]
-    1: [1, 2, 3, 4, 5, 6],           # Task 1: OLUs 1–6
-    2: [7, 8, 9, 10, 11, 12],       # Task 2: OLUs 7–12
-    3: [13, 14, 15, 16, 17, 18],    # Task 3: OLUs 13–18
-    4: [19, 20, 21, 22, 23, 24],    # Task 4: OLUs 19–24
-    5: [25, 26, 27, 28, 29, 30]     # Task 5: OLUs 25–30
+    1: [1, 2, 3, 4, 5, 6],            # Task 1: OLUs 1–6
+    2: [7, 8, 9, 10, 11, 12],         # Task 2: OLUs 7–12
+    3: [13, 14, 15, 16, 17, 18],      # Task 3: OLUs 13–18
+    4: [19, 20, 21, 22, 23, 24],      # Task 4: OLUs 19–24
+    5: [25, 26, 27, 28, 29, 30]       # Task 5: OLUs 25–30
 }
 
-# create a dictionary where each key is a task ID from task_groups and each value is an empty list which will store filenames for the support/query set of that task 
-task_support = {i: [] for i in task_groups}        # support set = mostly unprotected focus OLUs
-task_query = {i: [] for i in task_groups}          # query set = mostly protected focus OLUs
-# now: task_support and task_query == { 1: [], 2: [], 3: [], 4: [], 5: [] } 
+task_groups = {  # Type: dict[int, list[int]]
+    1: [1, 2, 3, 4, 5, 6],                  # Task 1: OLUs 1–6
+    2: [7, 8, 9, 10, 11, 12],               # Task 2: OLUs 7–12
+    3: [13, 14, 15, 16, 17],                # Task 3: OLUs 13–18
+    4: [18, 19, 20, 21, 22],                # Task 4: OLUs 19–24
+    5: [23, 24, 25, 26, 27, 28, 29, 30]     # Task 5: OLUs 25–30
+}
 
-used_scenarios = set () # a set is a list that only stores unique items and it's optimized for fast lookup
 # ─────────────────────────────────────────────────────────────────────
 #        Define helper function for scenario task splitting
 # ─────────────────────────────────────────────────────────────────────
@@ -540,7 +539,13 @@ maml = MAMLTrainer(model, INNER_LR, OUTER_LR, INNER_STEPS, META_BATCH_SIZE)
 
 ######################### training data #########################
 
-filename_train_data = f"./data/batched_data/SF/train_tensor_batches_SUPPORT_K{SUPPORT_K}_QUERY_K{QUERY_K}.pkl" # reason behind the naming: since MAML AD training code and the data batching depends on SUPPORT_K and QUERY_K
+filename_train_data = f"./data/batched_data/SF/train_tensor_batches_SUPPORT_K_{SUPPORT_K}_QUERY_K_{QUERY_K}.pkl" # reason behind the naming: since MAML AD training code and the data batching depends on SUPPORT_K and QUERY_K
+
+# create a dictionary where each key is a task ID from task_groups and each value is an empty list which will store filenames for the support/query set of that task 
+task_support = {i: [] for i in task_groups}        # support set = mostly unprotected focus OLUs
+task_query = {i: [] for i in task_groups}          # query set = mostly protected focus OLUs
+# now: task_support and task_query == { 1: [], 2: [], 3: [], 4: [], 5: [] } 
+used_scenarios = set () # a set is a list that only stores unique items and it's optimized for fast lookup
 
 if os.path.exists(filename_train_data):          
     with open(filename_train_data, "rb") as f: # rb: open the file for Reading Binary data 
@@ -555,7 +560,7 @@ else: # if the file does not exist then do the data batching
     print("🔄 Building dataset lookup dictionary for the training data...")
     ds_lookup_train = build_dataset_lookup (ds_train)
     print(f"✅ Dataset lookup built with {len(ds_lookup_train)} entries.")     
-    task_batches_train = prepare_batches (task_support, task_query, support_k = SUPPORT_K, query_k = QUERY_K)
+    task_batches_train = prepare_batches (task_support  , task_query , support_k = SUPPORT_K, query_k = QUERY_K)
     tensor_batches_train = build_tensor_batches (ds_lookup_train, task_batches_train)  # full x/y tensors pre loaded
 
     # make the folder exists before saving 
@@ -570,7 +575,15 @@ else: # if the file does not exist then do the data batching
 
 ######################### Validation data #########################
 
-filename_val_data = f"./data/batched_data/SF/val_tensor_batches_SUPPORT_K{SUPPORT_K}_QUERY_K{QUERY_K}.pkl" # reason behind the naming: since MAML AD Validation code and the data batching depends on SUPPORT_K and QUERY_K
+filename_val_data = f"./data/batched_data/SF/val_tensor_batches_SUPPORT_K_{SUPPORT_K}_QUERY_K_{QUERY_K}.pkl" # reason behind the naming: since MAML AD Validation code and the data batching depends on SUPPORT_K and QUERY_K
+
+
+# reassign NEW global containers for validation
+task_support = {i: [] for i in task_groups}        # support set = mostly unprotected focus OLUs
+task_query = {i: [] for i in task_groups}          # query set = mostly protected focus OLUs
+used_scenarios = set () # a set is a list that only stores unique items and it's optimized for fast lookup
+
+
 
 if os.path.exists(filename_val_data):          
     with open(filename_val_data, "rb") as f: # rb: open the file for Reading Binary data 
@@ -585,7 +598,7 @@ else: # if the file does not exist then do the data batching
     print("🔄 Building dataset lookup dictionary for the validation data...")
     ds_lookup_val = build_dataset_lookup (ds_val)
     print(f"✅ Dataset lookup built with {len(ds_lookup_val)} entries.")     
-    task_batches_val = prepare_batches (task_support, task_query, support_k = SUPPORT_K, query_k = QUERY_K)
+    task_batches_val = prepare_batches (task_support , task_query , support_k = SUPPORT_K, query_k = QUERY_K)
     tensor_batches_val = build_tensor_batches (ds_lookup_val, task_batches_val)  # full x/y tensors pre loaded
 
     # make the folder exists before saving 
@@ -600,14 +613,20 @@ else: # if the file does not exist then do the data batching
 # # ───────────── Log Experiment Setup ────────────────────────────────────────
 
 log_file = open(log_file_path, "w")  
+log_file_val = open(log_file_path_val, "w")  
 
 # Write experiment header
 log_file.write("========================================\n")
 
+log_file.write(f"Experiment started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
 log_file.write("============   DATA   ============\n")
-log_file.write(f"Data path: {SF_DATASET}\n")
-log_file.write(f"Data used for training: {len(ds_lookup_train)}\n")
-log_file.write(f"Data used for validation: {len(ds_lookup_val)}\n")
+
+log_file.write(f"Training Data path: {SF_DATASET_TRAIN}\n")
+# log_file.write(f"Data used for training: {len(ds_lookup_train)}\n") # LATER - try to find a way to log in the number of elements used 
+
+log_file.write(f"Validation Data path: {SF_DATASET_VAL}\n")
+# log_file.write(f"Data used for validation: {len(ds_lookup_val)}\n") 
 
 
 log_file.write(f"PATCH_SIZE: {PATCH_SIZE}\n")
@@ -630,72 +649,104 @@ log_file.write(f"FINETUNE_EPOCHS: {FINETUNE_EPOCHS}\n")
 log_file.write(f"STEPS_PER_EPOCH: {STEPS_PER_EPOCH}\n")
 
 
-log_file.write(f"EXPERIMENT_NOTE: {EXPERIMENT_NOTE}\n\n")
-log_file.write("========================================\n\n")
+log_file.write(f"EXPERIMENT_NOTE: {EXPERIMENT_NOTE}\n")
+log_file.write("========================================\n")
 log_file.flush()
 
 # ─────────────── Fine‑tuning loop (few epochs) ────────────────────────────────────────
 
 
-# best_val_loss = float("inf")        # initialized as a very big number (to ensure that we always keep improving)
-# batch_indices = {task_id: 0 for task_id in tensor_batches_train} # we need a separate index per task, since each task rotates through its own batches.
+best_val_loss = float("inf")        # initialized as a very big number (to ensure that we always keep improving)
+batch_indices = {task_id: 0 for task_id in tensor_batches_train} # we need a separate index per task, since each task rotates through its own batches.
 
-# for epoch in range(FINETUNE_EPOCHS):
-#     losses = []
-#     for step in range(STEPS_PER_EPOCH):
-#         acc_g, n = None, 0
-#         for task_id in range(META_BATCH_SIZE):
+for epoch in range(FINETUNE_EPOCHS):
+    losses = []
+    for step in range(STEPS_PER_EPOCH):
+        acc_g, n = None, 0
+        for task_id in range(META_BATCH_SIZE):
 
-#             real_task_id = task_id + 1 # fix 0 based indexing 
-#             batch_index = batch_indices[real_task_id]
+            real_task_id = task_id + 1 # fix 0 based indexing 
+            batch_index = batch_indices[real_task_id]
 
-#             # fetch batch 
-#             x_s, y_s, x_q, y_q, slr_tensor = tensor_batches_train[real_task_id][batch_index]
+            # fetch batch 
+            x_s, y_s, x_q, y_q, slr_tensor = tensor_batches_train[real_task_id][batch_index]
             
-#             # update index 
-#             batch_indices[real_task_id] = (batch_index + 1) % len (tensor_batches_train[real_task_id])
+            # update index 
+            batch_indices[real_task_id] = (batch_index + 1) % len (tensor_batches_train[real_task_id])
 
-#             # x -> (N, 1024, 1024, 1) and y -> (N, 1024, 1024, 4) (both x and y are tensors)
+            # x -> (N, 1024, 1024, 1) and y -> (N, 1024, 1024, 4) (both x and y are tensors)
 
-#             qloss,g = maml.fast(x_s,y_s,x_q,y_q,slr_tensor)
+            qloss,g = maml.fast(x_s,y_s,x_q,y_q,slr_tensor)
 
-#             print(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, Step {step+1}/{STEPS_PER_EPOCH}, Task {n+1}/{META_BATCH_SIZE}, query-loss: {qloss:.4f}")
-#             log_file.write(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, Step {step+1}/{STEPS_PER_EPOCH}, Task {n+1}/{META_BATCH_SIZE}, query-loss: {qloss:.4f}")
-#             log_file.flush()  # Ensures it's written to disk immediately
+            print(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, Step {step+1}/{STEPS_PER_EPOCH}, Task {n+1}/{META_BATCH_SIZE}, query-loss: {qloss:.4f}\n")
+            log_file.write(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, Step {step+1}/{STEPS_PER_EPOCH}, Task {n+1}/{META_BATCH_SIZE}, query-loss: {qloss:.4f}\n")
+            log_file.flush()  # Ensures it's written to disk immediately
 
-#             losses.append(qloss.numpy())
+            losses.append(qloss.numpy())
 
-#             if acc_g is None: 
-#                 acc_g=g
-#             else:             
-#                 acc_g=[a+b for a,b in zip(acc_g,g)]
+            if acc_g is None: 
+                acc_g=g
+            else:             
+                acc_g=[a+b for a,b in zip(acc_g,g)]
             
-#             n+=1  # in the main training code this is task_count
+            n+=1  # in the main training code this is task_count
 
-#         acc_g=[g/n for g in acc_g]
-#         maml.meta_update(acc_g)
+        acc_g=[g/n for g in acc_g]
+        maml.meta_update(acc_g)
 
-#     print(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, mean query-loss: {np.mean(losses):.4f}")
-#     log_file.write(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, mean query-loss: {np.mean(losses):.4f}")
-#     log_file.flush()  # Ensures it's written to disk immediately
-
-
-#     # ───── ───── ───── ───── Evaluation on Validation Set ───── ───── ───── ───── 
-#     val_losses = []
-
-#     for task_id in val_batches: 
-#         for x_s, y_s, x_q, 
+    print(f"\nEpoch {epoch+1}/{FINETUNE_EPOCHS}, mean query-loss: {np.mean(losses):.4f}\n")
+    log_file.write(f"\nEpoch {epoch+1}/{FINETUNE_EPOCHS}, mean query-loss: {np.mean(losses):.4f}\n\n")
+    log_file.flush()  # Ensures it's written to disk immediately
 
 
+    # ───── ───── ───── ───── Evaluation on Validation Set ───── ───── ───── ───── 
+    val_losses = []                                                    # Create an empty list to store the validaton losses for each task 
 
+    for task_id in tensor_batches_val:                                        # Loop over all validation tasks
+        for x_s, y_s, x_q, y_q, slr_tensor in tensor_batches_val[task_id]:    # Loop over all batches (scenarios) for this task 
 
+            # Run MAML fast adaption using support and query sets -> this gives back the query loss to this adapted model 
+            val_q_loss, _ = maml.fast(x_s, y_s, x_q, y_q, slr_tensor)
+            # note :maml.fast(...) returns two values: (query_loss, gradients)
+            # But during validation, we only care about the loss (not updating weights),
+            # so we use '_' to ignore the gradients 
 
-# # ───── Save fine‑tuned weights ──────────────────────────────────────────────
-# FT_WEIGHTS = os.path.join(OUT_DIR, "final_maml_ft_sf.h5")
-# model.save_weights(FT_WEIGHTS)
-# print("✓  fine‑tuned weights written to", FT_WEIGHTS)
-# log_file.write(f"fine‑tuned weights written to {FT_WEIGHTS}\n")
-# log_file.flush()  # Ensures it's written to disk immediately
+            # Convert the query loss (a Tensor) to a Numpy number and store it 
+            val_losses.append(val_q_loss.numpy())
+        
+    # Compute the average query loss across all validation batches
+    val_mean_loss = np.mean(val_losses)
+
+    # Print the evalidation loss for this epoch 
+    print (f"Epoch {epoch+1}, Validation query loss: {val_mean_loss: .4f}\n")
+
+    # Log the validation loss to a fine for later analysis 
+    log_file_val.write (f"Epoch {epoch+1}, Validation query loss: {val_mean_loss: .4f}\n")
+    log_file_val.flush()    # Immediately write to disl (avoid buffering delays)
+
+    # ───── Save the best model ─────
+    # If the current validation loss is better (lower) than any previous epoch 
+    if val_mean_loss < best_val_loss: 
+
+        # delete old best if it exists 
+        if 'best_model_path' in locals() and os.path.exists(best_model_path): 
+            os.remove(best_model_path)
+        
+        best_val_loss = val_mean_loss   # Update the best loss seen so far 
+        best_epoch = epoch + 1  
+        best_model_path = os.path.join(OUT_DIR, f"best_model_epoch_{best_epoch}.h5") 
+        model.save_weights(best_model_path) # Save the model weights to a file  
+
+        # Print confirmation that the best model was saved 
+        print("✓ Saved best model (val loss improved)")
+            
+
+# ───── Save fine‑tuned weights ──────────────────────────────────────────────
+FT_WEIGHTS = os.path.join(OUT_DIR, "final_maml_ft_sf.h5")
+model.save_weights(FT_WEIGHTS)
+print("✓  fine‑tuned weights written to", FT_WEIGHTS)
+log_file.write(f"fine‑tuned weights written to {FT_WEIGHTS}\n")
+log_file.flush()  # Ensures it's written to disk immediately
 
 
 # ⏱️ End timer + print summary
@@ -710,3 +761,4 @@ log_file.write(f"Total training time: {int(hours)} hours {int(minutes)} minutes 
 log_file.flush()  
 
 log_file.close()
+log_file_val.close()
