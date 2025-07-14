@@ -1,13 +1,13 @@
-###### VERSION where support set -> 1 scenario && query set -> 1 scenario
+################################################################################
+# VERSION 1 (v1): Each task consists of a single support scenario and a single query scenario
+################################################################################
 
-
-#!/usr/bin/env python
-# coding: utf-8
 """
 Fine‑tune the previously MAML‑trained CASPIAN model on a *small* set of
 SF tasks.  We simply run a few more outer‑loop epochs where the meta‑batch
 is sampled **only from the SF TF‑Dataset** you prepared.
 """
+
 import os, tensorflow as tf, numpy as np
 from   models import CASPIANv2_MAML as new_models
 from datetime import datetime
@@ -23,12 +23,11 @@ import time
 
 ### 
 # part 1 to change before running the code
-
 MODEL_NAME = "v1_test4"
 
 BASE_CHECKPOINT = f"./models/trained_models/aya/{MODEL_NAME}/final_maml_weights.h5"
-# SF_DATASET    = "./data/SF_slr_1m/FSL_MAML_SF_dataset"   # was using the full SF data 
-SF_DATASET      = "./data/SF_slr_1m/FSL_MAML_SF_train_ds_aug_split_1"   # now only using a section for training and the rest of teh data val & test 
+# SF_DATASET    = "./data/SF_slr_1m/FSL_MAML_SF_dataset"   # was using the full SF data (by mistake)
+SF_DATASET      = "./data/SF_slr_1m/FSL_MAML_SF_train_ds_aug_split_1"   # now only using a section for training and the rest of the data val & test 
 
 
 OUT_DIR         = f"./models/trained_models/aya/{MODEL_NAME}/SF_FT"
@@ -182,9 +181,12 @@ maml = MAMLTrainer(model, INNER_LR, OUTER_LR, INNER_STEPS, META_BATCH_SIZE)
 
 # ───── SF fine‑tune dataset iterator (shuffled & repeated) ───────────────────
 
+# original line
+# ds_sf = load_tf_dataset(SF_DATASET).shuffle(50,reshuffle_each_iteration=True).batch(2, drop_remainder=True).repeat() 
+
+
 # be careful -> Since we are trying to get 2 by 2 elements -> if the dataset has an odd number of samples, the final batch will only contain 1 sample
 # for this reason we are using drop_remainder=True as without that it was crashing
-# ds_sf = load_tf_dataset(SF_DATASET).shuffle(50,reshuffle_each_iteration=True).batch(2, drop_remainder=True).repeat() # og line 
 ## new line for fasting data handling 
 ds_sf = load_tf_dataset(SF_DATASET) \
            .shuffle(50, reshuffle_each_iteration=True) \
@@ -222,7 +224,7 @@ for epoch in range(FINETUNE_EPOCHS):
             # f_str_batch       -> (2,) ← 1 string per scenario
             # x_big_batch       -> (2, 1024, 1024, 1) and y_big_batch -> (2, 1024, 1024, 1)
             # slr_val_batch     -> (2,) ← 1 float per scenario
-            # region_mask_batch -> (2, 1024, 1024) ← batch of bool masks ✅
+            # region_mask_batch -> (2, 1024, 1024) ← batch of bool masks 
                                 #  tf.Tensor([   2 1024 1024], shape=(3,), dtype=int32)
 
             # get the support set instance 

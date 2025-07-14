@@ -1,4 +1,6 @@
-# for now this code is not useful -> will be needed if I use a data that has many SLR values per region & want to run VERSION 1 code
+
+# For running the v1 code:  
+# Not currently in use - this will be needed if the dataset includes multiple SLR values per region.
 
 import tensorflow as tf
 import os

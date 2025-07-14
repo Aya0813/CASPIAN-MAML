@@ -1,4 +1,5 @@
-# og 
+# original code shared 
+
 
 #!/usr/bin/env python
 # coding: utf-8
@@ -26,9 +27,8 @@ from models import CASPIANv2_MAML as new_models
 #                              MAML HYPERPARAMS
 ################################################################################
 
-# to change
 
-# OG Hyperparameters 
+## Original Hyperparameters 
 
 PATCH_SIZE = 64        # dimension of each patch: 64x64 [ it s actually 64 and not 256 Bilal was just testing ]
 SUPPORT_PATCHES = 20    # how many patches in the support set (the number of patches we get from the original)
@@ -42,6 +42,9 @@ STEPS_PER_EPOCH = 100   # how many meta-batches per epoch
 
 ## 
 
+# to change
+
+
 ###### for quick testing of the code 
 # PATCH_SIZE = 64             # keep as-is unless you want to change model structure
 # SUPPORT_PATCHES = 10        # ↓ from 20 → speeds up inner loop 
@@ -53,12 +56,9 @@ STEPS_PER_EPOCH = 100   # how many meta-batches per epoch
 # EPOCHS = 100                # ↓ from 200 → enough to see basic progress
 # STEPS_PER_EPOCH = 50       # ↓ from 100 → quick per-epoch loop
 
-
-
 ########
 
 # to change
-
 MODEL_NAME = "MAML_CASPIAN_patch_og_full_hyperparameters_1024"
 SAVE_DIR = f"./models/trained_models/{MODEL_NAME}"
 os.makedirs(SAVE_DIR, exist_ok=True)
@@ -269,8 +269,6 @@ def custom_loss(y_true, y_pred):
 
     loss = alphaH*weighted_huber_loss + alphaC*weighted_cosh_loss + (1-alphaH-alphaC)*quantile_loss
     return tf.reduce_mean(loss)
-
-
 
 
 ################################################################################

@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
+
+
 """
 Fine‑tune the previously MAML‑trained CASPIAN model on a *small* set of
 SF tasks.  We simply run a few more outer‑loop epochs where the meta‑batch
@@ -16,10 +18,8 @@ import time
 # OUT_DIR         = "./models/trained_models/MAML_CASPIAN_patch_FT_SF"
 # os.makedirs(OUT_DIR, exist_ok=True)
 
-
-# initial code above - bellow just for testing 
-# had to re run the part of the data construction code about SF cause the dataset_spec.pb was missing
-
+# Initial code above — the section below is for testing purposes only.
+# The San Francisco dataset had to be reconstructed due to a missing 'dataset_spec.pb' file.
 
 # BASE_CHECKPOINT = "./models/trained_models/MAML_CASPIAN_patch_latest/final_maml_weights_256.h5"
 BASE_CHECKPOINT = "./models/trained_models/aya/archive/MAML_CASPIAN_patch_og_full_hyper/final_maml_weights_64.h5"

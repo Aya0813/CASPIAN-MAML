@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+
 """
 Evaluate the MAML‑trained CASPIAN model on the AD / SF *test* scenarios.
 
@@ -34,13 +35,11 @@ from utilsSFAD import artae_score, delta_score, acc0   # <- already in your repo
 # MODEL_WEIGHTS    = "./models/trained_models/MAML_CASPIAN_patch/final_maml_weights_256.h5"
 # EVAL_DATASET     = "C:/NYUAD/CASPIAN/AregSF/data/FSL_MAML_AD_test_ds_split_1"
 
-# above code is the original - bellow is my code 
+# The above section contains the original code — the section below includes my updated version.
 
-### only part of the code to change as I'm running experiments
+### only part of the code to change as I'm running experiments ###
 PATCH_SIZE          = 1024
 MODEL_NAME          = "v2_opt_test2/SF_FT"
-###
-
 
 MODEL_WEIGHTS      = f"./models/trained_models/aya/{MODEL_NAME}/final_maml_weights.h5"
 AD_EVAL_DATASET    = "./data/AD_slr_0.5m/test/FSL_MAML_AD_test_ds_split_1"

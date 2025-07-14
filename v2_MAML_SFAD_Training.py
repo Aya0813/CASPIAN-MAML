@@ -1,11 +1,8 @@
 ################################################################################
-#      VERSION 2: where scenarios grouped into 5 tasks with each OLUs that behave the same way
-        # test 1 -> where 1 scenario ONLY from support/query set per task 
-        # test 2 -> where different random set of scenarios per support/query set per task 
+# VERSION 2 (v2): Scenarios are grouped into 5 tasks based on OLU similarity (i.e., similar protection behavior)
+#   - Test 1: Each task uses only one scenario for both the support and query sets
+#   - Test 2: Each task uses randomly sampled scenarios for the support and query sets
 ################################################################################
-
-#!/usr/bin/env python
-# coding: utf-8
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -21,7 +18,7 @@ import random
 
 from datetime import datetime
 from models import CASPIANv2_MAML as new_models
-from collections import defaultdict # to use a special kind of dictionary where you don t have to check if a key already exists before adding to it
+from collections import defaultdict # to use a special kind of dictionary where you don't have to check if a key already exists before adding to it
 
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Reduce TensorFlow logging
@@ -39,7 +36,7 @@ META_BATCH_SIZE = 5        # !!!!!! CRUTIAL in this case it is SET to 5 cause we
 EPOCHS = 50                # 50 - 100 - watch convergence to avoid overfitting
 STEPS_PER_EPOCH = 25       # 20-40 - cause full image mem intensive
 
-# INITIAL TEST JUST TO SEE THAT IT WORKS - works :)) 
+# Initial test to confirm that the implementation runs successfully —> confirmed working
 # PATCH_SIZE = 1024        # Full image (still needed for model input shape)
 # INNER_STEPS = 1          # Just 1 inner loop update
 # INNER_LR = 0.0001        # Safe learning rate
@@ -80,12 +77,6 @@ task_query = {i: [] for i in task_groups}          # query set = mostly protecte
 used_scenarios = set () # a set is a list that only stores unique items and it's optimized for fast lookup
 
 max_per_set = 20 # max support/query set scenarios per task 
-
-
-# # Initialize your nested structure
-# data_store = {
-#     task_id: {'support': {}, 'query': {}} for task_id in task_groups
-# }
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -161,7 +152,7 @@ def assign_scenario_to_task (f,x,y,yf):
         print (f"Unknown OLU string length:{total_olus}, skipping scenario.")
         return None, None, None, None
     
-    ##### now we have the scneario's: olu_binary, slr_val, and region_mask #####
+    ##### now we have the scenario's: olu_binary, slr_val, and region_mask #####
 
     was_assigned = False # in order to track the status of each scenario (assigned to a support/query set or not)
     
@@ -524,16 +515,12 @@ def main():
     # all_scenarios = get_all_filenames_in_dataset(dataset_path) # First collect all filenames in dataset (no repeat/shuffle here)
 
     ds_train = load_tf_dataset(dataset_path).prefetch(tf.data.AUTOTUNE) # note assignment logic happens inside assign_scenario_to_task function via map_fn
-    # .prefetch(tf.data.AUTOTUNE) to ensure the data loading is faster
-
 
     #print("🔄 Building dataset lookup dictionary...")
     #ds_lookup = build_dataset_lookup(ds_train)       
     #print(f"✅ Dataset lookup built with {len(ds_lookup)} entries.")
 
-
-
-    # # goes one by one through each scenario in the dataset -> where the task groups actually gets filled 
+    # Goes one by one through each scenario in the dataset -> where the task groups actually gets filled 
     for f, x, y, region_mask, slr_val in ds_train:
         # For every i in task_groups, check if both support and query sets of task i are full. 
         all_full = all(
@@ -544,10 +531,7 @@ def main():
         # Once every task has a full supprot set and query set, break the loop early 
         if all_full: # if True get out of the for loop 
             break
-    
-
-    # ADD TO THE LOG files the files that ended up being used or not - create another log file just for logging the dataset?? 
-    
+        
     # Write experiment header
     log_file.write("========================================\n")
     log_file.write(f"Data used: {dataset_path}\n")
@@ -578,17 +562,7 @@ def main():
             for task_id in range(META_BATCH_SIZE):
 
                 real_task_id = task_id + 1 # fix 0 based indexing 
-                
-
-                # RANDOMIZATION (TO DO INTRODUCE K AS A global variable - HYPER PARAMETER AS WELL!!! )
-                # support_fnames = random.sample(task_support[real_task_id], k=2)
-                # query_fnames = random.sample(task_query[real_task_id], k=2)
-
-                # support_fnames = task_support [real_task_id]        # shape: (number of scenarios, 1024, 1024, 1)
-                # query_fnames = task_query [real_task_id]            # shape: (number of scenarios, 1024, 1024, 1)
-
-                # random.shuffle(support_fnames)
-                # random.shuffle(query_fnames)
+            
 
                 x_s, y_s, slr_val_s = load_scenarios_from_filenames(ds_train, support_fnames)
                 x_q, y_q, slr_val_q = load_scenarios_from_filenames(ds_train, query_fnames)
@@ -667,13 +641,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# to avoid overfitting -> 2 strategies
-    #  Shuffle the support/query scenario order each time they're used
-    #  Sample a random subset of scenarios from each task 
-
-
- # $ rsync -av C:\Users\ae2195\Desktop\MAML\data ae2195@jubail.abudhabi.nyu.edu:/scratch/ae2195/CASPIAN_MAML
-
-

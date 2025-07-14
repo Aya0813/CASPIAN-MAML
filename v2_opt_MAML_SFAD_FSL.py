@@ -1,13 +1,22 @@
-###### VERSION where support set -> 1 scenario && query set -> 1 scenario
 
+"""
+Optimized Version of: v2_MAML_SFAD_FSL.py
 
-#!/usr/bin/env python
-# coding: utf-8
+This script is an updated version of the original v2 few-shot fine-tuning code.
+The key improvement lies in optimizing the data loading process to mitigate CPU bottlenecks
+during support and query task preparation. By precomputing and caching tensor batches for each
+task group, this version ensures faster setup and more efficient GPU usage during fine-tuning.
+
+In addition to fine-tuning, this version also includes a validation script for hyperparameter tuning,
+allowing performance to be monitored on a validation support/query set across different configurations.
+
+Note: The 'v2' in the filenames refers to the use of a task definition strategy that groups 
+scenarios based on similarity in OLU (Operational Land Unit) protection configurations. 
+This grouping creates more meaningful and coherent tasks for meta-learning.
+
+Hence the name: 'opt' for 'optimized'.
 """
-Fine‑tune the previously MAML‑trained CASPIAN model on a *small* set of
-SF tasks.  We simply run a few more outer‑loop epochs where the meta‑batch
-is sampled **only from the SF TF‑Dataset** you prepared.
-"""
+
 import os, sys, re, time, pickle
 import tensorflow as tf
 import numpy as np
@@ -17,16 +26,15 @@ import random
 
 from datetime import datetime
 from models import CASPIANv2_MAML as new_models
-from collections import defaultdict # to use a special kind of dictionary where you don t have to check if a key already exists before adding to it
+from collections import defaultdict # a special kind of dictionary where you don t have to check if a key already exists before adding to it
 
 
 # ───── Locations ────────────────────────────────────────────────────────────
-# og 
+# from original code 
 # BASE_CHECKPOINT = "./models/trained_models/MAML_CASPIAN_patch/final_maml_weights.h5"
 # SF_DATASET      = "./data/FSLFSL_MAML_SF_dataset"  # <‑‑ your file
 # OUT_DIR         = "./models/trained_models/MAML_CASPIAN_patch_FT_SF"
 # os.makedirs(OUT_DIR, exist_ok=True)
-# had to re run the part of the data construction code about SF cause the dataset_spec.pb was missing
 
 ### 
 # Part 1 to change before running the code
@@ -42,10 +50,10 @@ log_file_path_val = os.path.join(log_dir, "val_log.txt")    # to log all validat
 # Ensure the logs directory exists
 os.makedirs(log_dir, exist_ok=True)
 
-
 # ───────────────────────────── Data ────────────────────────────────────────
-# was using the FULL SF data 
+# Initial mistake: unintentionally used the full San Francisco dataset 
 # SF_DATASET    = "./data/SF_slr_1m/FSL_MAML_SF_dataset"   
+
 # now only using a section for training and the rest of the data val & test 
 SF_DATASET_TRAIN      = "./data/SF_slr_1m/FSL_MAML_SF_train_ds_aug_split_1"  
 SF_DATASET_VAL        = "./data/SF_slr_1m/FSL_MAML_SF_val_ds_aug_split_1"  
@@ -59,8 +67,8 @@ INNER_STEPS      = 5           # good balance
 INNER_LR         = 0.00002     # safe low LR
 OUTER_LR         = 0.000002    # stable meta updates
 
-FINETUNE_EPOCHS  = 20          # power of 2, quicker run
-STEPS_PER_EPOCH  = 10          # same, for ~256 total updates
+FINETUNE_EPOCHS  = 20          
+STEPS_PER_EPOCH  = 10          
 
 
 # data specific
@@ -68,7 +76,6 @@ META_BATCH_SIZE  = 5           # keep for 5 task groups
 SUPPORT_K = 1
 QUERY_K = 1
 MAX_PER_SET = 5                # max support/query set scenarios per task 
-
 
 
 # Part 3 (final) to change before running the code
@@ -79,7 +86,7 @@ EXPERIMENT_NOTE = ("Now validation setup working (first test was using v2_opt_te
 #     Define groups of OLUs → each group becomes a separate MAML task
 # ─────────────────────────────────────────────────────────────────────
 
-
+# initial arbitrary 
 # task_groups = {  # Type: dict[int, list[int]]
 #     1: [1, 2, 3, 4, 5, 6],            # Task 1: OLUs 1–6
 #     2: [7, 8, 9, 10, 11, 12],         # Task 2: OLUs 7–12
@@ -88,6 +95,7 @@ EXPERIMENT_NOTE = ("Now validation setup working (first test was using v2_opt_te
 #     5: [25, 26, 27, 28, 29, 30]       # Task 5: OLUs 25–30
 # }
 
+# new OLU groupings according to found literature (see final report)
 task_groups = {  # Type: dict[int, list[int]]
     1: [1, 2, 3, 4, 5, 6],                  # Task 1: OLUs 1–6
     2: [7, 8, 9, 10, 11, 12],               # Task 2: OLUs 7–12
@@ -119,9 +127,8 @@ def get_sf_mask():
     return m.T
 MASK_SF = get_sf_mask()
 
-
 # ─────────────────────────────────────────────────────────────────────
-#       Main function that groups a scenario into the right task
+#       Main function that groups a scenario into the right task 
 # ─────────────────────────────────────────────────────────────────────
 
 def assign_scenario_to_task (f,x,y,yf): ## INSTEAD OF clear_ds()
@@ -346,7 +353,6 @@ def build_tensor_batches (lookup_dict, task_batches):
     This creates a final dictionary: task_id -> list of full tensor batches. 
 
     task_batches: dictionary created using prepare_batches(...)
-
     """
 
     tensor_batches = {}             # Creates an empty dict to store final tensor batches for each task 
@@ -415,7 +421,7 @@ def build_tensor_batches (lookup_dict, task_batches):
 #     ...
 # }
 
-# Each item in a batch list is a tuple: (support_fnames, query_fnames) — where each of those is a list of filenames like:
+# Each item in a batch list is a tuple: (support_fnames, query_fnames) — where each of those is a list of filenames
 
 
 # ───── process_label_with_mask instead of sample_support_query (unchanged from v1 MAML training code)  ───────────────────
@@ -523,19 +529,9 @@ print("✓  base MAML weights loaded")
 
 maml = MAMLTrainer(model, INNER_LR, OUTER_LR, INNER_STEPS, META_BATCH_SIZE)
 
-# ───── SF fine‑tune dataset iterator (shuffled & repeated) ───────────────────
-
-####### initial implementation of version 2 (v2) #######
-# be careful -> Since we are trying to get 2 by 2 elements -> if the dataset has an odd number of samples, the final batch will only contain 1 sample
-# for this reason we are using drop_remainder=True as without that it was crashing
-# ds_sf = load_tf_dataset(SF_DATASET).shuffle(50,reshuffle_each_iteration=True).batch(2, drop_remainder=True).repeat() # og line 
-## new line for fasting data handling 
-########################################################
-
-
-# ─────────────────── SF fine‑tune dataset iterator (shuffled & repeated) ───────────────────
-
-# 3) dataset
+# ─────────────────────────────────────────────────────────────────────
+#                               3) dataset
+# ─────────────────────────────────────────────────────────────────────
 
 ######################### training data #########################
 
@@ -593,7 +589,7 @@ if os.path.exists(filename_val_data):
 
 else: # if the file does not exist then do the data batching
 
-    # Loading & batching the VALIDATION data & savint to disk
+    # Loading & batching the VALIDATION data & saving to disk
     ds_val = load_tf_dataset (SF_DATASET_VAL) 
     print("🔄 Building dataset lookup dictionary for the validation data...")
     ds_lookup_val = build_dataset_lookup (ds_val)
@@ -623,7 +619,7 @@ log_file.write(f"Experiment started at: {datetime.now().strftime('%Y-%m-%d %H:%M
 log_file.write("============   DATA   ============\n")
 
 log_file.write(f"Training Data path: {SF_DATASET_TRAIN}\n")
-# log_file.write(f"Data used for training: {len(ds_lookup_train)}\n") # LATER - try to find a way to log in the number of elements used 
+# log_file.write(f"Data used for training: {len(ds_lookup_train)}\n") # LATER - log in the number of elements used 
 
 log_file.write(f"Validation Data path: {SF_DATASET_VAL}\n")
 # log_file.write(f"Data used for validation: {len(ds_lookup_val)}\n") 
@@ -708,8 +704,7 @@ for epoch in range(FINETUNE_EPOCHS):
             # Run MAML fast adaption using support and query sets -> this gives back the query loss to this adapted model 
             val_q_loss, _ = maml.fast(x_s, y_s, x_q, y_q, slr_tensor)
             # note :maml.fast(...) returns two values: (query_loss, gradients)
-            # But during validation, we only care about the loss (not updating weights),
-            # so we use '_' to ignore the gradients 
+            # But during validation, we only care about the loss (not updating weights), so we use '_' to ignore the gradients 
 
             # Convert the query loss (a Tensor) to a Numpy number and store it 
             val_losses.append(val_q_loss.numpy())
@@ -722,7 +717,7 @@ for epoch in range(FINETUNE_EPOCHS):
 
     # Log the validation loss to a fine for later analysis 
     log_file_val.write (f"Epoch {epoch+1}, Validation query loss: {val_mean_loss: .4f}\n")
-    log_file_val.flush()    # Immediately write to disl (avoid buffering delays)
+    log_file_val.flush()    # Immediately write to disk (avoid buffering delays)
 
     # ───── Save the best model ─────
     # If the current validation loss is better (lower) than any previous epoch 

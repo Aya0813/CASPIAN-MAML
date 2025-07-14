@@ -1,9 +1,6 @@
 ################################################################################
-#      VERSION 1: where support set -> 1 scenario && query set -> 1 scenario
-################################################################################ 
-
-#!/usr/bin/env python
-# coding: utf-8
+# VERSION 1 (v1): Each task consists of a single support scenario and a single query scenario
+################################################################################
 
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Reduce TensorFlow logging
@@ -37,7 +34,7 @@ META_BATCH_SIZE = 5        # 2-4 - cause full image mem intensive
 EPOCHS = 50                # 50 - 100 - watch convergence to avoid overfitting
 STEPS_PER_EPOCH = 25       # 20-40 - cause full image mem intensive
 
-# INITIAL TEST JUST TO SEE THAT IT WORKS - works :)) 
+# Initial test to confirm that the implementation runs successfully —> confirmed working
 # PATCH_SIZE = 1024        # Full image (still needed for model input shape)
 # INNER_STEPS = 1          # Just 1 inner loop update
 # INNER_LR = 0.0001        # Safe learning rate
@@ -136,7 +133,7 @@ def load_tf_dataset(ds_path):
 #                    FULL SCENARIO instead of PATCH-BASED SAMPLING
 ################################################################################
 
-# function that replaces sample_support_and_query_patches() [ only function changed from original code]
+# function that replaces sample_support_and_query_patches() [ only function changed from original code ]
 def process_label_with_mask(y_tensor, region_mask_tensor): 
     """
     Prepares the 4-channel label tensor for a single scenario:

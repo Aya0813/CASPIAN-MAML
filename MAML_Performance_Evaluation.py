@@ -38,9 +38,7 @@ print("Current working directory:", os.getcwd())
 print("AD Eval dataset exists?", os.path.exists("./data/AD_slr_0.5m/test/FSL_MAML_AD_test_ds_split_1"))
 print("SF Eval dataset exists?", os.path.exists("./data/SF_slr_1m/FSL_MAML_SF_test_ds_split_1"))
 
-# above code is the original - bellow is my code 
-
-### to change 
+### to change before running
 PATCH_SIZE          = 64
 MODEL_NAME          = "v1_test1_SF_FT_train_aug"
 ###
@@ -67,7 +65,7 @@ os.makedirs(SAVE_EXPL_NPY_DIR,  exist_ok=True)
 def normalize(a):                # common step before feeding data into ML to ensure numerical stability and faster training.
     mn, mx = a.min(), a.max()    # Get the minimum and maximum values in the input array `a`
     
-    # Normalize the array to the range [0, 1]
+    # Normalize the array to the range [0, 1] 
         # Subtract the minimum so the smallest value becomes 0
         # Divide by (max - min + small constant) to scale everything between 0 and 1
         # The small constant `1e-8` prevents division by zero in case all values in `a` are the same
@@ -217,9 +215,8 @@ def map_eval(f,x,y,yf):
 
 # Load the evaluation dataset from disk, then Apply the map function to each example using map_eval (which calls clear_ds_eval)
 
-# OG line changed to test SF as well instead of only AD
+# Original line changed to test SF as well instead of only AD
 # ds_eval = tf.data.Dataset.load(EVAL_DATASET).map(map_eval).batch(1) # Group the dataset into batches of size 1 (i.e., 1 scenario at a time)
-
 
 ad_eval_dataset = tf.data.Dataset.load(AD_EVAL_DATASET).map(map_eval)
 sf_eval_dataset = tf.data.Dataset.load(SF_EVAL_DATASET).map(map_eval)
@@ -305,7 +302,6 @@ for scenario_b, x_full_b, y_full_b, mask_b, slr_b in ds_eval:
         dic['d05'].append( delta_score(np.array([valid_t]), np.array([valid_p]),0.5).mean())
         dic['d01'].append( delta_score(np.array([valid_t]), np.array([valid_p]),0.1).mean())
         dic['acc'].append(  acc0(np.array([valid_t]), np.array([valid_p])).mean())
-
 
     # region = 'sf' if len(scenario.split('.')[0])==30 else 'ad' # caused problems cause a scenario is 11111110111111111_0.5m.input.npy so should be _ 
 

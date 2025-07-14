@@ -1,12 +1,15 @@
 
+"""
+Optimized Version of: v2_MAML_SFAD_Training.py
 
-################################################################################
-#      VERSION 2 OPTIMIZED: where scenarios grouped into 5 tasks with each OLUs that behave the same way
-################################################################################
+This script is an updated version of the original v2 MAML training code.
+The main enhancement is an optimized data loading pipeline to resolve CPU bottlenecks
+during task preparation. By caching and preloading tensor batches for each task
+group, this version significantly reduces overhead and improves GPU utilization
+during training.
 
-#!/usr/bin/env python
-# coding: utf-8
-
+Hence the name: 'opt' for 'optimized'.
+"""
 
 # ─────────────────────────────────────────────────────────────────────
 #                   Import necessary libraries
@@ -21,8 +24,7 @@ import random
 
 from datetime import datetime
 from models import CASPIANv2_MAML as new_models
-from collections import defaultdict # to use a special kind of dictionary where you don t have to check if a key already exists before adding to it
-
+from collections import defaultdict # a special kind of dictionary where you don t have to check if a key already exists before adding to it
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Reduce TensorFlow logging
 
@@ -32,20 +34,20 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Reduce TensorFlow logging
 
 # to change before running the code -> Hyperparameters bellow 
 PATCH_SIZE = 1024           # full image
-INNER_STEPS = 4             # increase to 10-20 to adapt meaningfully from a single full image
+INNER_STEPS = 4           
 INNER_LR = 0.0007      
 OUTER_LR = 0.00003 
-EPOCHS = 128                 # 50 - 100 - watch convergence to avoid overfitting
-STEPS_PER_EPOCH = 64        # 20-40 - cause full image mem intensive
+EPOCHS = 128                # watch convergence to avoid overfitting
+STEPS_PER_EPOCH = 64        # keep in mind - full image mem intensive
 
 # data specific
-META_BATCH_SIZE = 5          # !!!!!! CRUTIAL in this case it is SET to 5 cause we have 5 task groups
+META_BATCH_SIZE = 5          # CRUTIAL in this case it is SET to 5 cause we have 5 task groups (constant)
 SUPPORT_K = 2 
 QUERY_K = 2
-MAX_PER_SET = 20 # max support/query set scenarios per task 
+MAX_PER_SET = 20             # max support/query set scenarios per task 
 
 
-# INITIAL TEST JUST TO SEE THAT IT WORKS - works :)) 
+# Initial test to confirm that the implementation runs successfully —> confirmed working
 # PATCH_SIZE = 1024        # Full image (still needed for model input shape)
 # INNER_STEPS = 1          # Just 1 inner loop update
 # INNER_LR = 0.0001        # Safe learning rate
@@ -57,7 +59,7 @@ MAX_PER_SET = 20 # max support/query set scenarios per task
 
 
 # to change before running the code -> MODEL_NAME and EXPERIMENT_NOTE
-MODEL_NAME = "v2_opt_data_loading_opt"
+MODEL_NAME = "v2_opt_test3"
 # EXPERIMENT_NOTE = (
 #     "Main changes: "
 #     "Testing upper-bound limits of model adaptation using full-resolution inputs, longer inner loops, "
@@ -67,10 +69,6 @@ MODEL_NAME = "v2_opt_data_loading_opt"
 #     "STEPS_PER_EPOCH → 64    : Power of 2"
 #     "MAX_PER_SET → 32        : Clean power of 2"
 # )
-
-EXPERIMENT_NOTE = (
-    "testing whether data loading stored to the disk works"
-)
 
 SAVE_DIR = f"./models/trained_models/aya/{MODEL_NAME}"
 log_file_path = f"{SAVE_DIR}/loss_log.txt"
@@ -95,8 +93,8 @@ task_support = {i: [] for i in task_groups}        # support set = mostly unprot
 task_query = {i: [] for i in task_groups}          # query set = mostly protected focus OLUs
 # now: task_support and task_query == { 1: [], 2: [], 3: [], 4: [], 5: [] } 
 
-
 used_scenarios = set () # a set is a list that only stores unique items and it's optimized for fast lookup
+
 # ─────────────────────────────────────────────────────────────────────
 #        Define helper function for scenario task splitting
 # ─────────────────────────────────────────────────────────────────────
@@ -110,8 +108,6 @@ def hamming_distance (str1, str2):
 def non_focus_indices (focus_olus, total_olus):
     return [i for i in range (total_olus) if (i+1) not in focus_olus]
 # note: this is accounting for the fact that focus_olus is using 1-based numbering instead of python's 0-based numbering
-
-
 
 # ─────────────────────────────────────────────────────────────────────
 #        Helper functions to get binary region mask (SF or AD)
@@ -135,7 +131,6 @@ def get_ad_mask():
 sf_mask = get_sf_mask()
 ad_mask = get_ad_mask()
 
-
 # ─────────────────────────────────────────────────────────────────────
 #       Main function that groups a scenario into the right task
 # ─────────────────────────────────────────────────────────────────────
@@ -153,14 +148,14 @@ def assign_scenario_to_task (f,x,y,yf):
     olu_binary = f_str.split ('_')[0]   # Extract 17-bit binary OLU string
     total_olus = len(olu_binary)
 
-    ######## Extract the SLR value (e.g. 1.5m -> 1.5) ########
+    ########        Extract the SLR value (e.g. 1.5m -> 1.5)       ########
     slr_var = 1.0 # Default value if parsing fails 
     match = re.search(r'_(\d+(\.\d+)?)m', f_str)    # Searches the filename for a pattern like _1.5m to extract the sea level rise value.
     if match:                                       # If a match is found, extracts the number (e.g., 1.5) and converts it to a float 
         slr_val = float(match.group(1)) 
     print(f" Extracted SLR value: {slr_val}")
 
-    ########          Identify region (AD or SF)     ##########
+    ########        Identify region (AD or SF)        ##########
     if total_olus == 30: 
         region_mask = sf_mask
         print(" Region identified: San Francisco (SF)")
@@ -201,15 +196,15 @@ def assign_scenario_to_task (f,x,y,yf):
             
             # Decide target set (which set we're assigning the current scenario to) 
             if protected_count < total_focus / 2:       # meaning the majority of focus OLUs are unprotected 
-            #if protected_count > total_focus / 2:        # flipped just for experimentation 
+            #if protected_count > total_focus / 2:      # flipped just for experimentation 
                 target_set = task_support[task_id]      # append this scenario to the current task's support set 
                 target_label = "support"
             
             elif protected_count > total_focus / 2:     # meaning protected OLUs are the majority 
-            #elif protected_count < total_focus / 2:      # flipped just for experimentation 
-
+            #elif protected_count < total_focus / 2:    # flipped just for experimentation 
                 target_set = task_query [task_id]       # append this scenario to the current task's query set
                 target_label = "query"
+
             else: 
                 print(f"↔ Equal protected/unprotected focus OLUs for task {task_id} → skipping.")
                 continue # if a scenario has protected=unprotected OLUs for the focus OLU of a task -> move to the next task  
@@ -247,7 +242,7 @@ def assign_scenario_to_task (f,x,y,yf):
     if not was_assigned: 
         print(f"WARNING: scenario {f_str} could not be assigned to any task.")
     
-    ## once the scenario is assigned to a task -> rest of the code - unchanged from original clear_ds () ####
+    #### once the scenario is assigned to a task -> rest of the code - unchanged from original clear_ds () ####
     
     x_np = x.numpy()
     y_np = y.numpy()
@@ -257,6 +252,11 @@ def assign_scenario_to_task (f,x,y,yf):
     y = tf.expand_dims(y, axis=-1)
 
     return x, y, region_mask, slr_val
+
+
+# ─────────────────────────────────────────────────────────────────────
+#           Rest of the functions unchanged from original code 
+# ─────────────────────────────────────────────────────────────────────
 
 def map_fn(f, x, y, yf):
     """
@@ -279,6 +279,10 @@ def load_tf_dataset(ds_path):
     ds = raw_ds.map(lambda f, x, y, yf: map_fn(f, x, y, yf))
     return ds 
 
+
+# ──────────────────────────────────────────────────────────────────────────────────────────────
+#      Functions for constructing preprocessed tensor batches from the dataset
+# ──────────────────────────────────────────────────────────────────────────────────────────────
 
 def build_dataset_lookup(ds_train):
     """
@@ -311,14 +315,13 @@ def prepare_batches (task_support, task_query, support_k, query_k):
         task_batches: dict with task_id → list of (support_fnames, query_fnames)
     """ 
 
-    task_batches = {} # This wil stroe the final batches for each task 
+    task_batches = {} # This will store the final batches for each task 
 
     # Get only the task IDs that appear in BOTH support and query dicts 
-    # this avoids erros if one dict is missing a task ID (for whatever reason we don t have all tasks filled)
+    # this avoids erros if one dict is missing a task ID (for whatever reason we don't have all tasks filled)
     common_task_ids = set(task_support.keys()) & set(task_query.keys())
 
     print(f"Preparing batches for {len(common_task_ids)} tasks: {sorted(common_task_ids)}")  #  Track how many tasks we're processing
-
 
     # Loop through each valid task ID (sorted for consistent order)
     for task_id in sorted(common_task_ids):
@@ -337,17 +340,16 @@ def prepare_batches (task_support, task_query, support_k, query_k):
         # The number of valid batches is limited by whichever pool is smaller 
         K = min (max_support_batches, max_query_batches) # e.g K = 100, then for each task you prepare 100 meta-training batches.
 
-        # if we can t make at least one batch, skip this task
+        # if we can't make at least one batch, skip this task
         if K ==0: 
             print(f"Skipping task {task_id}: not enough support/query samples for batch size.")
             continue 
 
         print(f" Task {task_id}: creating {K} batches")  # Confirm task is included and how many batches it will have
 
-
         batches = [] # to hold the list of batches for this task 
 
-        # The scenarios are shuffled once per task.
+        # Optional: The scenarios are shuffled once per task.
         # random.shuffle(support_pool)
         # random.shuffle(query_pool)
 
@@ -367,11 +369,6 @@ def prepare_batches (task_support, task_query, support_k, query_k):
     return task_batches
 
 
-
-################################################################################
-#                    NEW ADDED FUNCTION TO OPTIMIZE THE DATA LOADING 
-################################################################################
-
 def build_tensor_batches (lookup_dict, task_batches):
     """
     Convert filename task_batches into actual tensors
@@ -379,7 +376,6 @@ def build_tensor_batches (lookup_dict, task_batches):
     This creates a final dictionary: task_id -> list of full tensor batches. 
 
     task_batches: dictionary created using prepare_batches(...)
-
     """
 
     tensor_batches = {}             # Creates an empty dict to store final tensor batches for each task 
@@ -448,15 +444,13 @@ def build_tensor_batches (lookup_dict, task_batches):
 #     ...
 # }
 
-# Each item in a batch list is a tuple: (support_fnames, query_fnames) — where each of those is a list of filenames like:
-
-
+# Each item in a batch list is a tuple: (support_fnames, query_fnames) — where each of those is a list of filenames
 
 ################################################################################
 #                    FULL SCENARIO instead of PATCH-BASED SAMPLING
 ################################################################################
 
-# function that replaces sample_support_and_query_patches() [ only function changed from original code]
+# function that replaces sample_support_and_query_patches() 
 def process_label_with_mask(y_tensor, region_mask_tensor): 
     """
     Prepares the 4-channel label tensor for a single scenario:
