@@ -80,13 +80,13 @@ EXPERIMENT_NOTE = ("Now validation setup working (first test was using v2_opt_te
 # ─────────────────────────────────────────────────────────────────────
 
 
-task_groups = {  # Type: dict[int, list[int]]
-    1: [1, 2, 3, 4, 5, 6],            # Task 1: OLUs 1–6
-    2: [7, 8, 9, 10, 11, 12],         # Task 2: OLUs 7–12
-    3: [13, 14, 15, 16, 17, 18],      # Task 3: OLUs 13–18
-    4: [19, 20, 21, 22, 23, 24],      # Task 4: OLUs 19–24
-    5: [25, 26, 27, 28, 29, 30]       # Task 5: OLUs 25–30
-}
+# task_groups = {  # Type: dict[int, list[int]]
+#     1: [1, 2, 3, 4, 5, 6],            # Task 1: OLUs 1–6
+#     2: [7, 8, 9, 10, 11, 12],         # Task 2: OLUs 7–12
+#     3: [13, 14, 15, 16, 17, 18],      # Task 3: OLUs 13–18
+#     4: [19, 20, 21, 22, 23, 24],      # Task 4: OLUs 19–24
+#     5: [25, 26, 27, 28, 29, 30]       # Task 5: OLUs 25–30
+# }
 
 task_groups = {  # Type: dict[int, list[int]]
     1: [1, 2, 3, 4, 5, 6],                  # Task 1: OLUs 1–6
