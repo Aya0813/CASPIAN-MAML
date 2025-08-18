@@ -658,7 +658,8 @@ batch_indices = {task_id: 0 for task_id in tensor_batches_train} # we need a sep
 for epoch in range(FINETUNE_EPOCHS):
     losses = []
     for step in range(STEPS_PER_EPOCH):
-        acc_g, n = None, 0
+        acc_g = None        # grads_accum -> accumulate grads across tasks in a meta-batch
+        n = 0               # this is task count 
         for task_id in range(META_BATCH_SIZE):
 
             real_task_id = task_id + 1 # fix 0 based indexing 
@@ -672,7 +673,8 @@ for epoch in range(FINETUNE_EPOCHS):
 
             # x -> (N, 1024, 1024, 1) and y -> (N, 1024, 1024, 4) (both x and y are tensors)
 
-            qloss,g = maml.fast(x_s,y_s,x_q,y_q,slr_tensor)
+            qloss,g = maml.fast(x_s,y_s,x_q,y_q,slr_tensor)     # For each task in the meta-batch you compute its gradient g using maml.fast(...).
+                # g is the grads_query
 
             print(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, Step {step+1}/{STEPS_PER_EPOCH}, Task {n+1}/{META_BATCH_SIZE}, query-loss: {qloss:.4f}\n")
             log_file.write(f"Epoch {epoch+1}/{FINETUNE_EPOCHS}, Step {step+1}/{STEPS_PER_EPOCH}, Task {n+1}/{META_BATCH_SIZE}, query-loss: {qloss:.4f}\n")
@@ -680,23 +682,42 @@ for epoch in range(FINETUNE_EPOCHS):
 
             losses.append(qloss.numpy())
 
-            if acc_g is None: 
-                acc_g=g
+            # --------------- gradient accumulation across tasks in a meta-batch --------------------- 
+            # Each task (within the META_BATCH_SIZE) generates gradients (g) using its own support/query set
+            # After collecting all gradients from the individual tasks, you average them and do one meta-update.
+
+            if acc_g is None: # at the start of the outer loop means that you haven't yet accumulated any gradients 
+                acc_g=g       # Just assign g directly to acc_g so you have a starting point.
             else:             
-                acc_g=[a+b for a,b in zip(acc_g,g)]
-            
-            n+=1  # in the main training code this is task_count
+                acc_g=[a+b for a,b in zip(acc_g,g)] # Take each gradient tensor from acc_g and add to it the corresponding gradient tensor from g, and store the result back into acc_g.
+                # why zip? -> Align each gradient in acc_g with the corresponding one in g, then add them pairwise (element-wise) without writing manual loops or indexing
 
-        acc_g=[g/n for g in acc_g]
-        maml.meta_update(acc_g)
+            # --------------- ------------------------------------------------- --------------------- 
 
+            n+=1  # we go to the next task (in the main training code 'n' is task_count) 
+
+        # done with the 5 tasks (META_BATCH_SIZE = 5)
+        acc_g=[g/n for g in acc_g]          # Averages the gradients across all tasks in the meta-batch
+        maml.meta_update(acc_g)             # Applies the averaged gradients to update the model's parameters (outer loop update)
+
+    
+    # done with all STEPS_PER_EPOCH steps -> done with 1 more epoch 
     print(f"\nEpoch {epoch+1}/{FINETUNE_EPOCHS}, mean query-loss: {np.mean(losses):.4f}\n")
     log_file.write(f"\nEpoch {epoch+1}/{FINETUNE_EPOCHS}, mean query-loss: {np.mean(losses):.4f}\n\n")
     log_file.flush()  # Ensures it's written to disk immediately
 
-
     # ───── ───── ───── ───── Evaluation on Validation Set ───── ───── ───── ───── 
-    val_losses = []                                                    # Create an empty list to store the validaton losses for each task 
+    val_losses = []                                                    # Create an empty list to store the validaton losses across tasks
+    val_task_losses = {task_id: [] for task_id in tensor_batches_val}  # For every task in my validation batches, make a place to record its losses.
+    # This creates a dictionary where: Each key is a task_id and each value is an empty list, which will later store the query losses for that task during validation
+    # val_task_losses = {
+    #     1: [],    # # losses for batches of task 1
+    #     2: [],    # # losses for batches of task 2
+    #     3: [],    # # losses for batches of task 3
+    #     4: [],    # # losses for batches of task 4
+    #     5: []     # # losses for batches of task 5 
+    # }
+
 
     for task_id in tensor_batches_val:                                        # Loop over all validation tasks
         for x_s, y_s, x_q, y_q, slr_tensor in tensor_batches_val[task_id]:    # Loop over all batches (scenarios) for this task 
@@ -706,16 +727,18 @@ for epoch in range(FINETUNE_EPOCHS):
             # note :maml.fast(...) returns two values: (query_loss, gradients)
             # But during validation, we only care about the loss (not updating weights), so we use '_' to ignore the gradients 
 
-            # Convert the query loss (a Tensor) to a Numpy number and store it 
-            val_losses.append(val_q_loss.numpy())
+            val_loss = val_q_loss.numpy()       # Convert the query loss (a Tensor) to a Numpy number 
+            val_losses.append(val_loss)         
+            val_task_losses[task_id].append(val_loss)   
         
+        # done with all batches of task_id and move to the next task 
+
+    # done with all of the batches of all of the tasks
     # Compute the average query loss across all validation batches
     val_mean_loss = np.mean(val_losses)
 
-    # Print the evalidation loss for this epoch 
-    print (f"Epoch {epoch+1}, Validation query loss: {val_mean_loss: .4f}\n")
-
-    # Log the validation loss to a fine for later analysis 
+    # Print and log - the evalidation loss for this epoch 
+    print (f"Epoch {epoch+1}, Validation query loss: {val_mean_loss: .4f}\n")       # renanme so the logging and printing makes sense as well 
     log_file_val.write (f"Epoch {epoch+1}, Validation query loss: {val_mean_loss: .4f}\n")
     log_file_val.flush()    # Immediately write to disk (avoid buffering delays)
 
@@ -734,6 +757,8 @@ for epoch in range(FINETUNE_EPOCHS):
 
         # Print confirmation that the best model was saved 
         print("✓ Saved best model (val loss improved)")
+        log_file_val.write("✓ Saved best model (val loss improved)")
+        log_file_val.flush()
             
 
 # ───── Save fine‑tuned weights ──────────────────────────────────────────────
