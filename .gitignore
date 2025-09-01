@@ -2,13 +2,13 @@
 /data/
 
 # Ignore results
-/Results/
+/eval/
 
 # Ignore Python cache
 __pycache__/
 /models/**/__pycache__/
 
-/models/trained_models/
+/models/given-trained-models/
 
 # Ignore log files folder  
 /sbatch_output_files/

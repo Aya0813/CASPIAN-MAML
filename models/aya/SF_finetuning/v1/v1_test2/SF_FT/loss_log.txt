@@ -1,0 +1,61 @@
+========================================
+Base checkpoint path: ./models/trained_models/aya/CASPIAN_MAML_v1_test2/final_maml_weights.h5
+PATCH_SIZE: 1024
+INNER_STEPS: 30
+INNER_LR: 2e-05
+OUTER_LR: 2e-06
+META_BATCH_SIZE: 5
+FINETUNE_EPOCHS: 50
+STEPS_PER_EPOCH: 100
+========================================
+
+Epoch 1/50, mean query-loss: 1.5365
+Epoch 2/50, mean query-loss: 1.4839
+Epoch 3/50, mean query-loss: 1.4557
+Epoch 4/50, mean query-loss: 1.4272
+Epoch 5/50, mean query-loss: 1.4209
+Epoch 6/50, mean query-loss: 1.4328
+Epoch 7/50, mean query-loss: 1.3773
+Epoch 8/50, mean query-loss: 1.4057 
+Epoch 9/50, mean query-loss: 1.3617
+Epoch 10/50, mean query-loss: 1.3362
+Epoch 11/50, mean query-loss: 1.3189
+Epoch 12/50, mean query-loss: 1.3358
+Epoch 13/50, mean query-loss: 1.2709
+Epoch 14/50, mean query-loss: 1.3012
+Epoch 15/50, mean query-loss: 1.2845
+Epoch 16/50, mean query-loss: 1.2574
+Epoch 17/50, mean query-loss: 1.2450
+Epoch 18/50, mean query-loss: 1.2408
+Epoch 19/50, mean query-loss: 1.2306
+Epoch 20/50, mean query-loss: 1.1755
+Epoch 21/50, mean query-loss: 1.1784
+Epoch 22/50, mean query-loss: 1.2001
+Epoch 23/50, mean query-loss: 1.1385
+Epoch 24/50, mean query-loss: 1.1488
+Epoch 25/50, mean query-loss: 1.1420
+Epoch 26/50, mean query-loss: 1.1215
+Epoch 27/50, mean query-loss: 1.0545
+Epoch 28/50, mean query-loss: 1.0786
+Epoch 29/50, mean query-loss: 1.0700
+Epoch 30/50, mean query-loss: 1.0231
+Epoch 31/50, mean query-loss: 0.9888
+Epoch 32/50, mean query-loss: 0.9826
+Epoch 33/50, mean query-loss: 0.9700
+Epoch 34/50, mean query-loss: 0.9606
+Epoch 35/50, mean query-loss: 0.9459
+Epoch 36/50, mean query-loss: 0.9369
+Epoch 37/50, mean query-loss: 0.9420
+Epoch 38/50, mean query-loss: 0.8814
+Epoch 39/50, mean query-loss: 0.9255
+Epoch 40/50, mean query-loss: 0.9226
+Epoch 41/50, mean query-loss: 0.9103
+Epoch 42/50, mean query-loss: 0.8889
+Epoch 43/50, mean query-loss: 0.8931
+Epoch 44/50, mean query-loss: 0.8935
+Epoch 45/50, mean query-loss: 0.8947
+Epoch 46/50, mean query-loss: 0.8952
+Epoch 47/50, mean query-loss: 0.8809
+Epoch 48/50, mean query-loss: 0.8814
+Epoch 49/50, mean query-loss: 0.8868
+Epoch 50/50, mean query-loss: 0.8372

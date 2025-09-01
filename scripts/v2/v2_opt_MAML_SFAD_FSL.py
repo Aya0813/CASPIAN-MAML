@@ -530,7 +530,7 @@ print("✓  base MAML weights loaded")
 maml = MAMLTrainer(model, INNER_LR, OUTER_LR, INNER_STEPS, META_BATCH_SIZE)
 
 # ─────────────────────────────────────────────────────────────────────
-#                               3) dataset
+#                             dataset
 # ─────────────────────────────────────────────────────────────────────
 
 ######################### training data #########################
@@ -551,7 +551,7 @@ if os.path.exists(filename_train_data):
 
 else: # if the file does not exist then do the data batching
 
-    # Loading & batching the TRAINING data & savint to disk
+    # Loading & batching the TRAINING data & saving to disk
     ds_train = load_tf_dataset (SF_DATASET_TRAIN) 
     print("🔄 Building dataset lookup dictionary for the training data...")
     ds_lookup_train = build_dataset_lookup (ds_train)
@@ -649,7 +649,7 @@ log_file.write(f"EXPERIMENT_NOTE: {EXPERIMENT_NOTE}\n")
 log_file.write("========================================\n")
 log_file.flush()
 
-# ─────────────── Fine‑tuning loop (few epochs) ────────────────────────────────────────
+# ─────────────── Fine‑tuning loop (few epochs) ────────────────────────────
 
 
 best_val_loss = float("inf")        # initialized as a very big number (to ensure that we always keep improving)

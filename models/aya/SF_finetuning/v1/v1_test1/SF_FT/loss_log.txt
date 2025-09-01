@@ -1,0 +1,36 @@
+========================================
+Base checkpoint path: ./models/trained_models/aya/CASPIAN_MAML_v1_test1/final_maml_weights.h5
+PATCH_SIZE: 1024
+INNER_STEPS: 20
+INNER_LR: 2e-05
+OUTER_LR: 2e-06
+META_BATCH_SIZE: 5
+FINETUNE_EPOCHS: 25
+STEPS_PER_EPOCH: 50
+========================================
+
+Epoch 1/25, mean query-loss: 1.6435
+Epoch 2/25, mean query-loss: 1.5478
+Epoch 3/25, mean query-loss: 1.5536
+Epoch 4/25, mean query-loss: 1.5384
+Epoch 5/25, mean query-loss: 1.4949
+Epoch 6/25, mean query-loss: 1.4992
+Epoch 7/25, mean query-loss: 1.4569
+Epoch 8/25, mean query-loss: 1.4415
+Epoch 9/25, mean query-loss: 1.4290
+Epoch 10/25, mean query-loss: 1.4224
+Epoch 11/25, mean query-loss: 1.3734
+Epoch 12/25, mean query-loss: 1.4017
+Epoch 13/25, mean query-loss: 1.4184
+Epoch 14/25, mean query-loss: 1.3873
+Epoch 15/25, mean query-loss: 1.3919
+Epoch 16/25, mean query-loss: 1.3607
+Epoch 17/25, mean query-loss: 1.3753
+Epoch 18/25, mean query-loss: 1.3494
+Epoch 19/25, mean query-loss: 1.3801
+Epoch 20/25, mean query-loss: 1.3646
+Epoch 21/25, mean query-loss: 1.3582
+Epoch 22/25, mean query-loss: 1.3251
+Epoch 23/25, mean query-loss: 1.2902
+Epoch 24/25, mean query-loss: 1.2856
+Epoch 25/25, mean query-loss: 1.3028
