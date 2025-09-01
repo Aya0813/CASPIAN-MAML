@@ -1,5 +1,6 @@
 # Ignore data folder
-/data/
+/data/processed/
+/data/raw/
 
 # Ignore results
 /eval/
