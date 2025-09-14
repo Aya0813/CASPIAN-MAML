@@ -1,6 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=v2-val
-
+#SBATCH --job-name=val-batch
 
 #SBATCH -o sbatch_output_files/job.%J.out
 #SBATCH -e sbatch_output_files/job.%J.err
@@ -23,12 +22,13 @@ conda activate tf-caspian-maml
 #Your appication commands go here
 echo "Running script at $(date)"
 
-# python -u v2_opt_MAML_SFAD_Training.py
-python -u v2_opt_MAML_SFAD_FSL.py
+cd /scratch/ae2195/CASPIAN_MAML 
+
+python -u v2_opt_MAML_SFAD_Training.py
+# python -u v2_opt_MAML_SFAD_FSL.py
 # python -u v1_MAML_Performance_Evaluation.py
 
 echo "Finished at $(date)"
-
 
 # Move .out file for persistent record
 # mv sbatch_output_files/job.${SLURM_JOB_ID}.out ./data/batched_data/SF/run_log_${SLURM_JOB_ID}.txt

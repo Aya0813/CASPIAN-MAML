@@ -1,0 +1,20 @@
+========================================
+============   DATA   ============
+Data path: ./data/raw/AD_slr_0.5m/val/FSL_MAML_AD_val_ds_aug_split_1
+PATCH_SIZE: 1024
+META_BATCH_SIZE: 5
+SUPPORT_K: 2
+QUERY_K: 2
+MAX_PER_SET: 20
+
+============   MODEL   ============
+============   TRAINING   ============
+INNER_STEPS: 4
+INNER_LR: 0.0007
+OUTER_LR: 3e-05
+EPOCHS: 128
+STEPS_PER_EPOCH: 64
+
+========================================
+
+Total training time: 0 hours 0 minutes 15 seconds

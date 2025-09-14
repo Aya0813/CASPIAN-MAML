@@ -58,8 +58,10 @@ MAX_PER_SET = 20             # max support/query set scenarios per task
 # SUPPORT_PATCHES and QUERY_PATCHES not used anymore
 
 
+
+
 # to change before running the code -> MODEL_NAME and EXPERIMENT_NOTE
-MODEL_NAME = "v2_opt_test3"
+MODEL_NAME = "v2_opt_test3_with_val"
 # EXPERIMENT_NOTE = (
 #     "Main changes: "
 #     "Testing upper-bound limits of model adaptation using full-resolution inputs, longer inner loops, "
@@ -74,6 +76,10 @@ SAVE_DIR = f"./models/trained_models/aya/{MODEL_NAME}"
 log_file_path = f"{SAVE_DIR}/loss_log.txt"
 os.makedirs(SAVE_DIR, exist_ok=True) # Creates folder if needed
 
+OUT_DIR = f"./models/aya/AD_training/v2/{MODEL_NAME}/SF_FT_with_val"
+
+
+AD_DATASET_VAL        = "./data/raw/AD_slr_0.5m/val/FSL_MAML_AD_val_ds_aug_split_1"  
 
 # ─────────────────────────────────────────────────────────────────────
 #     Define groups of OLUs → each group becomes a separate MAML task
@@ -88,12 +94,13 @@ task_groups = {  # Type: dict[int, list[int]]
     5: [16,15]
 }
 
-# create a dictionary where each key is a task ID from task_groups and each value is an empty list which will store filenames for the support/query set of that task 
+
+
+# # reassign NEW global containers for validation
 task_support = {i: [] for i in task_groups}        # support set = mostly unprotected focus OLUs
 task_query = {i: [] for i in task_groups}          # query set = mostly protected focus OLUs
-# now: task_support and task_query == { 1: [], 2: [], 3: [], 4: [], 5: [] } 
-
 used_scenarios = set () # a set is a list that only stores unique items and it's optimized for fast lookup
+
 
 # ─────────────────────────────────────────────────────────────────────
 #        Define helper function for scenario task splitting
@@ -114,14 +121,14 @@ def non_focus_indices (focus_olus, total_olus):
 # ─────────────────────────────────────────────────────────────────────
 
 def get_sf_mask():
-    mask = np.load("./data/mask/sf_full_grid_1024.npy", allow_pickle=True).item()
+    mask = np.load("./data/raw/mask/sf_full_grid_1024.npy", allow_pickle=True).item()
     the_mask = np.zeros((1024, 1024), dtype=bool)
     idx = np.array(list(mask.values()))
     the_mask[idx[:, 0], idx[:, 1]] = True
     return the_mask.T
 
 def get_ad_mask():
-    mask = np.load("./data/mask/ad_full_grid_1024.npy", allow_pickle=True).item()
+    mask = np.load("./data/raw/mask/ad_full_grid_1024.npy", allow_pickle=True).item()
     the_mask = np.zeros((1024, 1024), dtype=bool)
     idx = np.array(list(mask.values()))
     the_mask[idx[:, 0], idx[:, 1]] = True
@@ -178,7 +185,7 @@ def assign_scenario_to_task (f,x,y,yf):
             print(f" Trying to assign to task {task_id}...")
 
             # Skip to the next task if both support & query sets are full for this task 
-            if len(task_support[task_id])> MAX_PER_SET and len(task_query[task_id]) > MAX_PER_SET: 
+            if len(task_support[task_id]) > MAX_PER_SET and len(task_query[task_id]) > MAX_PER_SET: 
                 print(f" Task {task_id} full → skipping.")
                 continue 
 
@@ -222,13 +229,14 @@ def assign_scenario_to_task (f,x,y,yf):
 
                     # keep on checking the different already existing scenarios in the target set
                     # as long as there is similarity keep going 
-                    if distance >= 2:
+                    if distance >= 4:   # initially was 2 (required hamming distance = 1 -> only 1 bit can be different)
                         similar_enough = False 
                         print(f" Dissimilar scenario found in {target_label} set (Hamming={distance}) → skipping task.")
                         break # stop when you find a scenario not similar to current focus scenario & move to next task 
                 
                 # if in target set all the scenarios are similar to the current scenario (similar_enough = True) append to target set
-                if similar_enough: 
+                # meaning -> (with distance >= 2) -> only one bit was changed OR non target bits were similar 
+                if similar_enough:  
                     target_set.append(f_str)
                     used_scenarios.add(f_str)
                     print(f" Assigned to task {task_id} as {target_label} (Hamming matched)")
@@ -299,8 +307,8 @@ def prepare_batches (task_support, task_query, support_k, query_k):
     For each task, divide its support/query set into non-overlapping batches.
     Each batch has 'support_k' support examples and 'query_k' query examples.
 
-    e.g support_k = query_k = 2 
-    [
+    e.g support_k = query_k = 2 (2 elements per batch for the support and query sets)
+    [   #       support      #  #     query        #           
         (['fname1', 'fname2'], ['fname3', 'fname4']),  # batch 1
         (['fname7', 'fname8'], ['fname9', 'fname10']), # batch 2 ... batch K 
         ...
@@ -308,11 +316,28 @@ def prepare_batches (task_support, task_query, support_k, query_k):
 
     Arguments: 
         task_support/task_query: set of all support/query scenarios for all tasks 
-        `supp_k`: how many support scenarios you use to adapt the model for a task.
-                i.e. The number of scenarios per batch in the support set (same for query)
+        `support_k`: The number of scenarios per batch in the support set
+        `query_k`:   The number of scenarios per batch in the query set
+        
 
     Returns:
-        task_batches: dict with task_id → list of (support_fnames, query_fnames)
+        task_batches: dict with 
+            Keys    → task IDs 
+            Values  → list of tuples where each contains support batches and a query batches
+        {
+            task_id_1: [
+                (support_batch_1, query_batch_1),
+                (support_batch_2, query_batch_2),
+                ...
+                (support_batch_K, query_batch_K)
+            ],
+            task_id_2: [
+                (support_batch_1, query_batch_1),
+                (support_batch_2, query_batch_2),
+                ...
+            ],
+            ...
+        }
     """ 
 
     task_batches = {} # This will store the final batches for each task 
@@ -341,7 +366,7 @@ def prepare_batches (task_support, task_query, support_k, query_k):
         K = min (max_support_batches, max_query_batches) # e.g K = 100, then for each task you prepare 100 meta-training batches.
 
         # if we can't make at least one batch, skip this task
-        if K ==0: 
+        if K ==0:   # means either support/query is empty for this task
             print(f"Skipping task {task_id}: not enough support/query samples for batch size.")
             continue 
 
@@ -366,7 +391,7 @@ def prepare_batches (task_support, task_query, support_k, query_k):
         task_batches [task_id] = batches
     
     # Return the FINAL dictionary of ALL task batches
-    return task_batches
+    return task_batches 
 
 
 def build_tensor_batches (lookup_dict, task_batches):
@@ -435,16 +460,26 @@ def build_tensor_batches (lookup_dict, task_batches):
                 (x_s_tensor, y_s_tensor, x_q_tensor, y_q_tensor, slr_tensor)
             )
 
-    # Return the full dict: task_id -> list of (x_s, y_s, x_q, y_q, slr_tensor)
     return tensor_batches
 
-# task_batches = {
-#     1: [ (support_fnames_1, query_fnames_1), (support_fnames_2, query_fnames_2), ... ],
-#     2: [ (support_fnames_1, query_fnames_1), ... ],
-#     ...
-# }
+    # Return the full dict: 
+    #   Key    -> task IDs 
+    #   Values -> List of tuples where each tuple contains 5 Tensorflow tensors 
 
-# Each item in a batch list is a tuple: (support_fnames, query_fnames) — where each of those is a list of filenames
+    # {
+    #     task_id_1: [
+    #         (x_s_tensor_1, y_s_tensor_1, x_q_tensor_1, y_q_tensor_1, slr_tensor_1),       # this is one batch 
+    #         (x_s_tensor_2, y_s_tensor_2, x_q_tensor_2, y_q_tensor_2, slr_tensor_2),       # another batch ... 
+    #         ...
+    #         (x_s_tensor_K, y_s_tensor_K, x_q_tensor_K, y_q_tensor_K, slr_tensor_K)
+    #     ],
+    #     task_id_2: [
+    #         (x_s_tensor_1, y_s_tensor_1, x_q_tensor_1, y_q_tensor_1, slr_tensor_1),
+    #         ...
+    #     ],
+    #     ...
+    # }
+
 
 ################################################################################
 #                    FULL SCENARIO instead of PATCH-BASED SAMPLING
@@ -643,32 +678,87 @@ def main():
     log_file = open(log_file_path, "w")  
 
 
-    # 3) dataset
+    ########################################
+    # ─────────────────────────────────────────────────────────────────────
+    #                             dataset
+    # ─────────────────────────────────────────────────────────────────────
+
     dataset_path = "./data/AD_slr_0.5m/train/FSL_MAML_AD_train_ds_aug_split_1"
-    filename = f"./data/batched_data/AD/train_tensor_batches_SUPPORT_K{SUPPORT_K}_QUERY_K{QUERY_K}.pkl" # reason behind the naming: since MAML AD training code and the data batching depends on SUPPORT_K and QUERY_K
 
+    ######################### training data #########################
 
-    if os.path.exists(filename):          
-        with open(filename, "rb") as f: # rb: open the file for Reading Binary data 
+    # note about task_support and task_query : 
+    # load_tf_dataset() 
+    # └── calls map_fn() for each data sample
+    #     └── calls assign_scenario_to_task() 
+    #         └── populates task_support and task_query lists for each task 
+
+    filename_train_data = f"./data/batched_data/AD/train_tensor_batches_SUPPORT_K_{SUPPORT_K}_QUERY_K_{QUERY_K}.pkl" # reason behind the naming: since MAML AD training code and the data batching depends on SUPPORT_K and QUERY_K
+
+    # create a dictionary where each key is a task ID from task_groups and each value is an empty list which will store filenames for the support/query set of that task 
+    task_support = {i: [] for i in task_groups}        # support set = mostly unprotected focus OLUs
+    task_query = {i: [] for i in task_groups}          # query set = mostly protected focus OLUs
+    # now: task_support and task_query == { 1: [], 2: [], 3: [], 4: [], 5: [] } 
+
+    used_scenarios = set () # a set is a list that only stores unique items and it's optimized for fast lookup
+
+    if os.path.exists(filename_train_data):          
+        with open(filename_train_data, "rb") as f: # rb: open the file for Reading Binary data 
             tensor_batches = pickle.load(f)
-        print (f"Loaded tensor_batches from {filename}") # why pickle? -> Works with any Python object, including nested dictionaries of NumPy arrays or TensorFlow tensors + Doesn't require converting to strings, JSON, or a TF format
-
+        print (f"Loaded tensor_batches from {filename_train_data}") # why pickle? -> Works with any Python object, including nested dictionaries of NumPy arrays or TensorFlow tensors + Doesn't require converting to strings, JSON, or a TF format
+    
     else: # if the file does not exist then do the data batching
+        # Loading & batching the TRAINING data & saving to disk
         ds_train = load_tf_dataset (dataset_path) 
-        print("🔄 Building dataset lookup dictionary...")
-        ds_lookup = build_dataset_lookup (ds_train)
-        print(f"✅ Dataset lookup built with {len(ds_lookup)} entries.")
-
-        task_batches = prepare_batches (task_support = task_support, task_query, support_k = SUPPORT_K, query_k = QUERY_K)
-        tensor_batches = build_tensor_batches (ds_lookup, task_batches)  # full x/y tensors pre loaded
+        print("🔄 Building dataset lookup dictionary for the training data...")
+        ds_lookup_train = build_dataset_lookup (ds_train)
+        print(f"✅ Dataset lookup built with {len(ds_lookup_train)} entries.")     
+        task_batches_train = prepare_batches (task_support  , task_query , support_k = SUPPORT_K, query_k = QUERY_K)
+        tensor_batches = build_tensor_batches (ds_lookup_train, task_batches_train)  # full x/y tensors pre loaded
 
         # make the folder exists before saving 
-        os.makedirs(os.path.dirname(filename), exist_ok = True)
+        os.makedirs(os.path.dirname(filename_train_data), exist_ok = True)
 
-        with open(filename, "wb") as f: 
+        with open(filename_train_data, "wb") as f: 
             pickle.dump(tensor_batches, f)
         
-        print (f"Saved tensor_batches to {filename}")
+        print (f"Saved tensor_batches to {filename_train_data}") 
+    
+
+    ######################### Validation data #########################
+
+    filename_val_data = f"./data/processed/AD/val_tensor_batches_SUPPORT_K_{SUPPORT_K}_QUERY_K_{QUERY_K}.pkl" # reason behind the naming: since MAML AD Validation code and the data batching depends on SUPPORT_K and QUERY_K
+    
+
+    task_support = {i: [] for i in task_groups}        # support set = mostly unprotected focus OLUs
+    task_query = {i: [] for i in task_groups}          # query set = mostly protected focus OLUs
+    # now: task_support and task_query == { 1: [], 2: [], 3: [], 4: [], 5: [] } 
+
+    used_scenarios = set () # a set is a list that only stores unique items and it's optimized for fast lookup
+
+
+    if os.path.exists(filename_val_data):          
+        with open(filename_val_data, "rb") as f: # rb: open the file for Reading Binary data 
+            tensor_batches_val = pickle.load(f)
+        print (f"Loaded tensor_batches from {filename_val_data}") # why pickle? -> Works with any Python object, including nested dictionaries of NumPy arrays or TensorFlow tensors + Doesn't require converting to strings, JSON, or a TF format
+
+    else: # if the file does not exist then do the data batching
+
+        # Loading & batching the VALIDATION data & saving to disk
+        ds_val = load_tf_dataset (AD_DATASET_VAL) 
+        print("🔄 Building dataset lookup dictionary for the validation data...")
+        ds_lookup_val = build_dataset_lookup (ds_val)
+        print(f"✅ Dataset lookup built with {len(ds_lookup_val)} entries.")     
+        task_batches_val = prepare_batches (task_support , task_query , support_k = SUPPORT_K, query_k = QUERY_K)
+        tensor_batches_val = build_tensor_batches (ds_lookup_val, task_batches_val)  # full x/y tensors pre loaded
+
+        # make the folder exists before saving 
+        os.makedirs(os.path.dirname(filename_val_data), exist_ok = True)
+
+        with open(filename_val_data, "wb") as f: 
+            pickle.dump(tensor_batches_val, f)
+        
+        print (f"Saved tensor_batches to {filename_val_data}") 
 
 
     # ───────────── Log Experiment Setup ───────────────────
@@ -677,8 +767,9 @@ def main():
     log_file.write("========================================\n")
 
     log_file.write("============   DATA   ============\n")
-    log_file.write(f"Data path: {dataset_path}\n")
-    log_file.write(f"Data used for training: {len(ds_lookup)}\n")
+    # log_file.write(f"Data path: {dataset_path}\n")
+    log_file.write(f"Data path: {AD_DATASET_VAL}\n")
+    # log_file.write(f"Data used for validation: {len(ds_lookup_val)}\n")
 
 
     log_file.write(f"PATCH_SIZE: {PATCH_SIZE}\n")
@@ -686,11 +777,12 @@ def main():
 
     log_file.write(f"SUPPORT_K: {SUPPORT_K}\n")
     log_file.write(f"QUERY_K: {QUERY_K}\n")
-    log_file.write(f"MAX_PER_SET: {MAX_PER_SET}\n")
+    log_file.write(f"MAX_PER_SET: {MAX_PER_SET}\n\n")
+
 
 
     log_file.write("============   MODEL   ============\n")
-    log_file.write(f"Base checkpoint path: {BASE_CHECKPOINT}\n")
+    #log_file.write(f"Base checkpoint path: {BASE_CHECKPOINT}\n\n")
 
 
     log_file.write("============   TRAINING   ============\n")
@@ -698,10 +790,10 @@ def main():
     log_file.write(f"INNER_LR: {INNER_LR}\n")
     log_file.write(f"OUTER_LR: {OUTER_LR}\n")
     log_file.write(f"EPOCHS: {EPOCHS}\n")
-    log_file.write(f"STEPS_PER_EPOCH: {STEPS_PER_EPOCH}\n")
+    log_file.write(f"STEPS_PER_EPOCH: {STEPS_PER_EPOCH}\n\n")
 
 
-    log_file.write(f"EXPERIMENT_NOTE: {EXPERIMENT_NOTE}\n\n")
+    # log_file.write(f"EXPERIMENT_NOTE: {EXPERIMENT_NOTE}\n\n")
     log_file.write("========================================\n\n")
     log_file.flush()
 
@@ -751,6 +843,8 @@ def main():
 
                 task_count += 1 # remember: the number of tasks is the META_BATCH_SIZE
 
+            # done with the 5 tasks (META_BATCH_SIZE = 5)
+
             print ("\n")
             # after one meta-batch of tasks, average the grads & update
             grads_accum = [g / task_count for g in grads_accum]
@@ -773,7 +867,8 @@ def main():
         epoch_loss = np.mean(meta_batch_losses[-META_BATCH_SIZE*STEPS_PER_EPOCH:]) # Computes the mean query loss across all meta-batches (steps × tasks) for the epoch
         epoch_losses.append(epoch_loss) # to store epoch-wise loss for plotting 
 
-
+        # done with all STEPS_PER_EPOCH steps -> done with 1 more epoch 
+        
         # for tracking: print in terminal and save to log file 
         print(f"Epoch {epoch+1}/{EPOCHS}, epoch loss: {epoch_loss:.4f}")
         print ("\n")
@@ -785,9 +880,68 @@ def main():
         # optionally save checkpoint
         # model.save_weights(os.path.join(SAVE_DIR, f"maml_epoch_{epoch+1}.h5"))
 
-    # final save
-    model.save_weights(os.path.join(SAVE_DIR, "final_maml_weights.h5"))
-    print("MAML Training Done!")
+    ##############################################################################################
+
+
+    # ───── ───── ───── ───── Evaluation on Validation Set ───── ───── ───── ───── 
+    val_losses = []                                                    # Create an empty list to store the validaton losses across tasks
+    val_task_losses = {task_id: [] for task_id in tensor_batches_val}  # For every task in my validation batches, make a place to record its losses.
+    # This creates a dictionary where: Each key is a task_id and each value is an empty list, which will later store the query losses for that task during validation
+    # val_task_losses = {
+    #     1: [],    # # losses for batches of task 1
+    #     2: [],    # # losses for batches of task 2
+    #     3: [],    # # losses for batches of task 3
+    #     4: [],    # # losses for batches of task 4
+    #     5: []     # # losses for batches of task 5 
+    # }
+
+    for task_id in tensor_batches_val:                                        # Loop over all validation tasks
+        for x_s, y_s, x_q, y_q, slr_tensor in tensor_batches_val[task_id]:    # Loop over all batches (scenarios) for this task 
+
+            # Run MAML fast adaption using support and query sets -> this gives back the query loss to this adapted model 
+            val_q_loss, _ = maml.fast(x_s, y_s, x_q, y_q, slr_tensor)
+            # note :maml.fast(...) returns two values: (query_loss, gradients)
+            # But during validation, we only care about the loss (not updating weights), so we use '_' to ignore the gradients 
+
+            val_loss = val_q_loss.numpy()       # Convert the query loss (a Tensor) to a Numpy number 
+            val_losses.append(val_loss)         
+            val_task_losses[task_id].append(val_loss)   
+        
+        # done with all batches of task_id and move to the next task 
+
+    # done with all of the batches of all of the tasks
+    # Compute the average query loss across all validation batches
+    val_mean_loss = np.mean(val_losses)
+
+    # Print and log - the evalidation loss for this epoch 
+    print (f"Epoch {epoch+1}, Validation query loss: {val_mean_loss: .4f}\n")       # renanme so the logging and printing makes sense as well 
+    #log_file_val.write (f"Epoch {epoch+1}, Validation query loss: {val_mean_loss: .4f}\n")
+    #log_file_val.flush()    # Immediately write to disk (avoid buffering delays)
+
+    # ───── Save the best model ─────
+    # If the current validation loss is better (lower) than any previous epoch 
+    if val_mean_loss < best_val_loss: 
+
+        # delete old best if it exists 
+        if 'best_model_path' in locals() and os.path.exists(best_model_path): 
+            os.remove(best_model_path)
+        
+        best_val_loss = val_mean_loss   # Update the best loss seen so far 
+        best_epoch = epoch + 1  
+        best_model_path = os.path.join(OUT_DIR, f"best_model_epoch_{best_epoch}.h5") 
+        model.save_weights(best_model_path) # Save the model weights to a file  
+
+        # Print confirmation that the best model was saved 
+        print("✓ Saved best model (val loss improved)")
+        #log_file_val.write("✓ Saved best model (val loss improved)")
+        #log_file_val.flush()
+    
+    
+    # ##############################################################################################
+    
+    # # final save
+    # model.save_weights(os.path.join(SAVE_DIR, "final_maml_weights.h5"))
+    # print("MAML Training Done!")
 
     # ⏱️ End timer + print summary
     end_time = time.time()

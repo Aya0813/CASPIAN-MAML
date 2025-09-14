@@ -39,13 +39,14 @@ from utilsSFAD import artae_score, delta_score, acc0   # <- already in your repo
 
 ### only part of the code to change as I'm running experiments ###
 PATCH_SIZE          = 1024
-MODEL_NAME          = "v2_opt_test2/SF_FT"
+MODEL_NAME          = "AD_training/v2/opt_test1"
 
-MODEL_WEIGHTS      = f"./models/trained_models/aya/{MODEL_NAME}/final_maml_weights.h5"
-AD_EVAL_DATASET    = "./data/AD_slr_0.5m/test/FSL_MAML_AD_test_ds_split_1"
-SF_EVAL_DATASET    = "./data/SF_slr_1m/FSL_MAML_SF_test_ds_split_1"
 
-SAVE_BASE_DIR      = f"./Results/{MODEL_NAME}"
+MODEL_WEIGHTS      = f"./models/aya/{MODEL_NAME}/final_maml_weights.h5"
+AD_EVAL_DATASET    = "./data/raw/AD_slr_0.5m/test/FSL_MAML_AD_test_ds_split_1"
+SF_EVAL_DATASET    = "./data/raw/SF_slr_1m/test/FSL_MAML_SF_test_ds_split_1"
+
+SAVE_BASE_DIR      = f"./eval/{MODEL_NAME}"
 SAVE_PRED_DIR      = f"{SAVE_BASE_DIR}/Predictions"
 SAVE_EXPL_IMG_DIR  = f"{SAVE_BASE_DIR}/Explainability"
 SAVE_EXPL_NPY_DIR  = f"{SAVE_BASE_DIR}/Explainability NPY"
@@ -114,13 +115,14 @@ def make_gradcam_heatmap(inputs, model, last_layer="activation_12"):
 #  Load masks (same routine you already have)
 # ──────────────────────────────────────────────────────────────────────────────
 def get_sf_mask():
-    d = np.load("./data/mask/sf_full_grid_1024.npy", allow_pickle=True).item()
+    d = np.load("./data/raw/mask/sf_full_grid_1024.npy", allow_pickle=True).item()
     m = np.zeros((1024,1024), bool)
     idx = np.array(list(d.values()))
     m[idx[:,0], idx[:,1]] = True
     return m.T
+
 def get_ad_mask():
-    d = np.load("./data/mask/ad_full_grid_1024.npy", allow_pickle=True).item()
+    d = np.load("./data/raw/mask/ad_full_grid_1024.npy", allow_pickle=True).item()
     m = np.zeros((1024,1024), bool)
     idx = np.array(list(d.values()))
     m[idx[:,0], idx[:,1]] = True
@@ -185,6 +187,38 @@ sf_eval_dataset = tf.data.Dataset.load(SF_EVAL_DATASET).map(map_eval)
 
 ds_eval = ad_eval_dataset.concatenate(sf_eval_dataset).batch(1) # Group the dataset into batches of size 1 (i.e., 1 scenario at a time)
 
+
+
+####### ####### newly added ######## ###########
+# Count elements in ds_eval (each element = 1 scenario because of .batch(1))
+num_scenarios = tf.data.experimental.cardinality(ds_eval).numpy()
+if num_scenarios < 0:  # unknown cardinality
+    num_scenarios = int(ds_eval.reduce(tf.constant(0, tf.int64), lambda x, _: x + 1).numpy())
+
+print("Number of scenarios in ds_eval:", num_scenarios)
+
+# Optional: also count separately
+n_ad = int(ad_eval_dataset.reduce(tf.constant(0, tf.int64), lambda x, _: x + 1).numpy())
+n_sf = int(sf_eval_dataset.reduce(tf.constant(0, tf.int64), lambda x, _: x + 1).numpy())
+print(f"AD scenarios: {n_ad}, SF scenarios: {n_sf}, Total: {n_ad + n_sf}")
+
+####### ####### ####### ####### ###########
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  newly added to assign to different tasks... 
+# ──────────────────────────────────────────────────────────────────────────────
+
+for scenario_b, x_full_b, y_full_b, mask_b, slr_b in ds_eval:
+    # scenario_b ->     shape == (1,) and dtype == byte‑string
+    # x_full_b   ->     shape: (1, 1024, 1024, 1)
+    # y_full_b   ->     shape: (1, 1024, 1024, 1)
+    # mask_b     ->     shape: (1, 1024, 1024)
+    # slr_b      ->     shape: (1,) → sea level rise value
+
+    scenario = scenario_b.numpy()[0].decode("utf‑8")   # extracts the first (and only) element from the batch and converts bytes to string
+
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 #  Metric containers
 # ──────────────────────────────────────────────────────────────────────────────
@@ -217,8 +251,8 @@ for scenario_b, x_full_b, y_full_b, mask_b, slr_b in ds_eval:
     ###### Split into patches & batch‑predict (change from patch based - no need for grid_to_patches() )  ######
 
     # add a batch dimension cause the model expects the shape (N, PATCH, PATCH, 1)
-    x_input = x_full[None, ...]                         # shape: (1, 1024, 1024, 1)
-    slr_input = np.array([[slr_val]], dtype=np.float32)   # shape: (1,1)
+    x_input   = x_full[None, ...]                           # shape: (1, 1024, 1024, 1)
+    slr_input = np.array([[slr_val]], dtype=np.float32)     # shape: (1,1)
 
     preds_full   = model.predict({
         "input_grid":x_input, 
