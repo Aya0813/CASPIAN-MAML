@@ -188,7 +188,6 @@ sf_eval_dataset = tf.data.Dataset.load(SF_EVAL_DATASET).map(map_eval)
 ds_eval = ad_eval_dataset.concatenate(sf_eval_dataset).batch(1) # Group the dataset into batches of size 1 (i.e., 1 scenario at a time)
 
 
-
 ####### ####### newly added ######## ###########
 # Count elements in ds_eval (each element = 1 scenario because of .batch(1))
 num_scenarios = tf.data.experimental.cardinality(ds_eval).numpy()
@@ -216,8 +215,6 @@ for scenario_b, x_full_b, y_full_b, mask_b, slr_b in ds_eval:
     # slr_b      ->     shape: (1,) → sea level rise value
 
     scenario = scenario_b.numpy()[0].decode("utf‑8")   # extracts the first (and only) element from the batch and converts bytes to string
-
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Metric containers
@@ -262,8 +259,8 @@ for scenario_b, x_full_b, y_full_b, mask_b, slr_b in ds_eval:
     pred_grid = preds_full[0,:,:,0]                     # shape: (1024, 1024)
 
     # Prepare label channels for un‑normalisation
-    # ─── extract 2‑D arrays and mask them ──────────────────────────────────
-
+    
+    # ─── extract 2‑D arrays and mask them ───────
     # raw ground‑truth depths (we remove the 3rd dim)
     y_true_2d = y_full[:,:,0]               # shape: (1024, 1024) [ y_full shape: (1024, 1024, 1) ]
     

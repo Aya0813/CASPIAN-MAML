@@ -17,4 +17,4 @@ STEPS_PER_EPOCH: 64
 
 ========================================
 
-Total training time: 0 hours 0 minutes 15 seconds
+Total training time: 0 hours 0 minutes 12 seconds
