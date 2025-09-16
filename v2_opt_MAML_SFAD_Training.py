@@ -574,7 +574,7 @@ def custom_loss(y_true, y_pred):
     y_norm  = y_true[:,:,:,0] # Normalized ground-truth depth
     mask    = y_true[:,:,:,1] # Valid region indicator
     y_min   = y_true[:,:,:,2] 
-    y_max   = y_true[:,:,:,3]
+    y_max   = y_true[:,:,:,3] 
 
     y_pred  = tf.squeeze(y_pred, axis=-1) # shape now (batch, patch_size, patch_size)
 
@@ -830,6 +830,10 @@ def main():
     epoch_losses = [] # added to track epoch loss
     iteration = 0 
     batch_indices = {task_id: 0 for task_id in tensor_batches} # we need a separate index per task, since each task rotates through its own batches.
+    
+    
+    
+    
     for epoch in range(EPOCHS):
         meta_batch_losses = []
 
@@ -921,22 +925,105 @@ def main():
         #     4: [],    # # losses for batches of task 4
         #     5: []     # # losses for batches of task 5 
         # }
+        
 
+
+        
         for task_id in tensor_batches_val:                                        # Loop over all validation tasks
             for x_s, y_s, x_q, y_q, slr_tensor in tensor_batches_val[task_id]:    # Loop over all batches (scenarios) for this task 
 
+                # x_s and x_q ->     shape: (2, 1024, 1024, 1), dtype <dtype: 'float32'>
+                # y_s and y_q ->     shape: (2, 1024, 1024, 4), dtype <dtype: 'float32'>
+                # slr_tensor  ->     shape: (2, 1), dtype <dtype: 'float32'>
+
                 # Run MAML fast adaption using support and query sets -> this gives back the query loss to this adapted model 
                 val_q_loss, _ = maml.fast(x_s, y_s, x_q, y_q, slr_tensor)
-                # note :maml.fast(...) returns two values: (query_loss, gradients)
+                # note :maml.fast(...) returns two values: (query_loss, gradients) 
                 # But during validation, we only care about the loss (not updating weights), so we use '_' to ignore the gradients 
 
                 val_loss = val_q_loss.numpy()       # Convert the query loss (a Tensor) to a Numpy number 
                 val_losses.append(val_loss)         
                 val_task_losses[task_id].append(val_loss)   
+
+
+                # ---------------  ---------------  --------------- 
+                # Steps we ll have to follow to get the metrics performance -> for each query element 
+                
+                # 1. x_input   -> shape: (1, 1024, 1024, 1)     => represented by x_q_one
+                #    y_true_2d -> shape: (1024, 1024)           => represented by y_true_q_one_2d
+                #    slr_input -> shape: (1,1)
+                #    mask_bool -> shape: (1024,1024) 
+
+                # note: q stands for query (cause we're using the query set elements for testing)
+
+                x_q_one   = x_q[0:1]            # shape: (1, 1024, 1024, 1) 
+
+                ### for y since there are 4 challenge we have to un-normalize ### 
+                y_norm  = y_q [:, :, :, 0]     # normalized values 
+                mask    = y_q [:, :, :, 1]    
+                y_min   = y_q [:, :, :, 2]
+                y_max   = y_q [:, :, :, 3]
+
+                # unormalize to real values 
+                y_true_q = y_norm * (y_max - y_min + 1e-8) + y_min       # shape: (2, 1024, 1024) 
+
+                # take the first element 
+                y_true_q_one_2d = y_real [0]             # shape: (1024, 1024) 
+            
+                ## ### ## ## 
+
+                # take the first element along axis 0 and the *second* channel (index 1)
+                mask_bool = y_q [0, :, :, 1]   # shape: (1024, 1024)
+
+                # one of the channels has the mask
+                slr_input = slr_tensor[0:1]     # shape: (1,1) 
+
+
+                preds_q = model.predict({       # shape: (1, 1024, 1024, 1)
+                    "input_grid":x_q_one, 
+                    "slr_input":slr_input}, 
+                    verbose=0)      
+
+                pred_grid_q = preds_q[0,:,:,0]                     # shape: (1024, 1024)
+            
+                # model prediction (already raw) 
+                y_pred_2d = pred_grid_q                  # shape: (1024, 1024)   
+
+                # We only want to compute MAE, RMSE, etc. on the valid locations, i.e., where mask_bool == True.
+                valid_t = y_true_q_one_2d[mask_bool]     # 1‑D vectors over inundation mask
+                valid_p = y_pred_2d[mask_bool]
+                # valid_t and valid_p are 1D arrays, each with N values (only the masked locations).
+
+                region = 'AD' ## TO BE CHANGED so i can extract it direct from scenario instead of being hardcoded ... 
+
+                # ─── Sanity checks before computing metrics ─────────────────────────────────
+                print(f"Region: {region}")
+                print(f"Valid True Min/Max: {valid_t.min() if valid_t.size else 'empty'} / {valid_t.max() if valid_t.size else 'empty'}")
+                print(f"Valid Pred Min/Max: {valid_p.min() if valid_p.size else 'empty'} / {valid_p.max() if valid_p.size else 'empty'}")
+                print(f"Valid count: {len(valid_t)}")  # number of valid pixels (where mask == True)
+
+                # NEXT TRY TO THINK WHERE To store the metrics  
+                # ... ### ALL STEPS LAYED DOWN IN GPT JUST FOLLOW THEM 
+                ## BEFORE -> LET S SEE THIS BASIC CODE WORKING
+
+
+
+                #### CONTINUE WITH THIS METHOD and if it does not WORK 
+                #      then I can try to get the predictions from the custom_loss() function 
+                #           (which already does all the masking stuff... and returns the loss ) BUT instead of ONLY returning the loss we return the predictions as well
+
+            
+                # Note:  In the MAML Performance Evaluation code -> 
+                #       there is no support or query as we are dealing with the test set as a whole
+                #       for us -> query element is the inference one
+            # ---------------  ---------------  --------------- 
+
+
             
             # done with all batches of task_id and move to the next task 
-
+            
             # gather the loss for each task group - CHECK TABLETTE FOR STEPS TO FOLLOW + rename the variables BETTER so they are more self explanatory 
+            
 
         # done with all of the batches of all of the tasks
         # Compute the average query loss across all validation batches
