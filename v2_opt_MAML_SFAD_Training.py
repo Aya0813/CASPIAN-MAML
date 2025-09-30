@@ -38,7 +38,7 @@ INNER_STEPS = 4
 INNER_LR = 0.0007      
 OUTER_LR = 0.00003 
 EPOCHS = 128                # watch convergence to avoid overfitting
-STEPS_PER_EPOCH = 64        # keep in mind - full image mem intensive
+STEPS_PER_EPOCH = 5         # keep in mind - full image mem intensive [ had 60 ish initially - changed it to 5 just making sure initially the code works ...]
 
 # data specific
 META_BATCH_SIZE = 5          # CRUTIAL in this case it is SET to 5 cause we have 5 task groups (constant)
@@ -58,26 +58,17 @@ MAX_PER_SET = 20             # max support/query set scenarios per task
 # SUPPORT_PATCHES and QUERY_PATCHES not used anymore
 
 
-
-
 # to change before running the code -> MODEL_NAME and EXPERIMENT_NOTE
-MODEL_NAME = "v2_opt_test3_with_val"
-# EXPERIMENT_NOTE = (
-#     "Main changes: "
-#     "Testing upper-bound limits of model adaptation using full-resolution inputs, longer inner loops, "
-#     "and large task pools to benchmark performance and GPU tolerance."
-#     "INNER_STEPS → 8         : Balanced power of 2" 
-#     "EPOCH  → 128            : Power of 2"
-#     "STEPS_PER_EPOCH → 64    : Power of 2"
-#     "MAX_PER_SET → 32        : Clean power of 2"
-# )
+MODEL_NAME = "v2_opt_test3_with_val_testing"
+EXPERIMENT_NOTE = (
+    "Testing initial version of per task validation eval"
+)
 
-SAVE_DIR = f"./models/trained_models/aya/{MODEL_NAME}"
+SAVE_DIR = f"./models/aya/AD_training/v2/{MODEL_NAME}"
 log_file_path = f"{SAVE_DIR}/loss_log.txt"
 os.makedirs(SAVE_DIR, exist_ok=True) # Creates folder if needed
 
-OUT_DIR = f"./models/aya/AD_training/v2/{MODEL_NAME}/SF_FT_with_val"
-
+OUT_DIR = f"./models/aya/AD_training/v2/{MODEL_NAME}"
 
 AD_DATASET_VAL        = "./data/raw/AD_slr_0.5m/val/FSL_MAML_AD_val_ds_aug_split_1"  
 
@@ -85,6 +76,7 @@ AD_DATASET_VAL        = "./data/raw/AD_slr_0.5m/val/FSL_MAML_AD_val_ds_aug_split
 #     Define groups of OLUs → each group becomes a separate MAML task
 # ─────────────────────────────────────────────────────────────────────
 
+## Global variables for storing ready preprocessed data ## 
 
 task_groups = {  # Type: dict[int, list[int]]
     1: [3,4,5,6],           # task 1 includes OLUs 3,4,5,6 
@@ -94,13 +86,17 @@ task_groups = {  # Type: dict[int, list[int]]
     5: [16,15]
 }
 
-
-
-# # reassign NEW global containers for validation
+# Create a dictionary where each key is a task ID from task_groups and each value is an empty list which will store filenames for the support/query set of that task 
 task_support = {i: [] for i in task_groups}        # support set = mostly unprotected focus OLUs
 task_query = {i: [] for i in task_groups}          # query set = mostly protected focus OLUs
 used_scenarios = set () # a set is a list that only stores unique items and it's optimized for fast lookup
 
+# # create a dictionary where each key is a task ID from task_groups and each value is an empty list which will store filenames for the support/query set of that task 
+# task_support = {i: [] for i in task_groups}        # support set = mostly unprotected focus OLUs
+# task_query = {i: [] for i in task_groups}          # query set = mostly protected focus OLUs
+# # now: task_support and task_query == { 1: [], 2: [], 3: [], 4: [], 5: [] } 
+
+# used_scenarios = set () # a set is a list that only stores unique items and it's optimized for fast lookup
 
 # ─────────────────────────────────────────────────────────────────────
 #        Define helper function for scenario task splitting
@@ -684,7 +680,7 @@ def main():
         gr_level=4, slr_input=True
     )
 
-    # Quick build: pass a dummy input
+    # Quick build: pass a dummy input 
     dummy_x = tf.zeros([1, PATCH_SIZE, PATCH_SIZE, 1], dtype=tf.float32)
     dummy_slr = tf.zeros([1,1], dtype=tf.float32)
     _ = model({"input_grid": dummy_x, "slr_input": dummy_slr}, training=False)
@@ -702,51 +698,43 @@ def main():
     log_file = open(log_file_path, "w")  
 
 
-    ########################################
     # ─────────────────────────────────────────────────────────────────────
     #                             dataset
     # ─────────────────────────────────────────────────────────────────────
-
-    dataset_path = "./data/AD_slr_0.5m/train/FSL_MAML_AD_train_ds_aug_split_1"
-
-    ######################### training data #########################
-
+    
     # note about task_support and task_query : 
     # load_tf_dataset() 
     # └── calls map_fn() for each data sample
     #     └── calls assign_scenario_to_task() 
     #         └── populates task_support and task_query lists for each task 
 
-    # filename_train_data = f"./data/batched_data/AD/train_tensor_batches_SUPPORT_K_{SUPPORT_K}_QUERY_K_{QUERY_K}.pkl" # reason behind the naming: since MAML AD training code and the data batching depends on SUPPORT_K and QUERY_K
+    ######################### training data #########################
 
-    # # create a dictionary where each key is a task ID from task_groups and each value is an empty list which will store filenames for the support/query set of that task 
-    # task_support = {i: [] for i in task_groups}        # support set = mostly unprotected focus OLUs
-    # task_query = {i: [] for i in task_groups}          # query set = mostly protected focus OLUs
-    # # now: task_support and task_query == { 1: [], 2: [], 3: [], 4: [], 5: [] } 
+    dataset_path        = "./data/raw/AD_slr_0.5m/train/FSL_MAML_AD_train_ds_aug_split_1"
+    filename_train_data = f"./data/processed/AD/train_tensor_batches_SUPPORT_K_{SUPPORT_K}_QUERY_K_{QUERY_K}.pkl" # reason behind the naming: since MAML AD training code and the data batching depends on SUPPORT_K and QUERY_K
 
-    # used_scenarios = set () # a set is a list that only stores unique items and it's optimized for fast lookup
-
-    # if os.path.exists(filename_train_data):          
-    #     with open(filename_train_data, "rb") as f: # rb: open the file for Reading Binary data 
-    #         tensor_batches = pickle.load(f)
-    #     print (f"Loaded tensor_batches from {filename_train_data}") # why pickle? -> Works with any Python object, including nested dictionaries of NumPy arrays or TensorFlow tensors + Doesn't require converting to strings, JSON, or a TF format
+    if os.path.exists(filename_train_data):          
+        with open(filename_train_data, "rb") as f: # rb: open the file for Reading Binary data 
+            tensor_batches = pickle.load(f)
+        print (f"Loaded tensor_batches from {filename_train_data}") # why pickle? -> Works with any Python object, including nested dictionaries of NumPy arrays or TensorFlow tensors + Doesn't require converting to strings, JSON, or a TF format
     
-    # else: # if the file does not exist then do the data batching
-    #     # Loading & batching the TRAINING data & saving to disk
-    #     ds_train = load_tf_dataset (dataset_path) 
-    #     print("🔄 Building dataset lookup dictionary for the training data...")
-    #     ds_lookup_train = build_dataset_lookup (ds_train)
-    #     print(f"✅ Dataset lookup built with {len(ds_lookup_train)} entries.")     
-    #     task_batches_train = prepare_batches (task_support  , task_query , support_k = SUPPORT_K, query_k = QUERY_K)
-    #     tensor_batches = build_tensor_batches (ds_lookup_train, task_batches_train)  # full x/y tensors pre loaded
-
-    #     # make the folder exists before saving 
-    #     os.makedirs(os.path.dirname(filename_train_data), exist_ok = True)
-
-    #     with open(filename_train_data, "wb") as f: 
-    #         pickle.dump(tensor_batches, f)
+    else: # if the file does not exist then do the data batching
+        # Loading & batching the TRAINING data & saving to disk
+        ds_train = load_tf_dataset (dataset_path) 
+        print("🔄 Building dataset lookup dictionary for the training data...")
+        ds_lookup_train = build_dataset_lookup (ds_train)
+        print(f"✅ Dataset lookup built with {len(ds_lookup_train)} entries.")     
         
-    #     print (f"Saved tensor_batches to {filename_train_data}") 
+        task_batches_train = prepare_batches (task_support  , task_query , support_k = SUPPORT_K, query_k = QUERY_K)
+        tensor_batches = build_tensor_batches (ds_lookup_train, task_batches_train)  # full x/y tensors pre loaded
+
+        # make the folder exists before saving 
+        os.makedirs(os.path.dirname(filename_train_data), exist_ok = True)
+
+        with open(filename_train_data, "wb") as f: 
+            pickle.dump(tensor_batches, f)
+        
+        print (f"Saved tensor_batches to {filename_train_data}") 
     
 
     ######################### Validation data #########################
@@ -783,6 +771,7 @@ def main():
         with open(filename_val_data, "wb") as f: 
             pickle.dump(tensor_batches_val, f)
         
+
         print (f"Saved tensor_batches to {filename_val_data}") 
 
 
@@ -792,7 +781,10 @@ def main():
     log_file.write("========================================\n")
 
     log_file.write("============   DATA   ============\n")
-    # log_file.write(f"Data path: {dataset_path}\n")
+    log_file.write("====   TRAINING    ====\n")
+    log_file.write("====   VALIDATION  ====\n")
+
+    log_file.write(f"Data path: {dataset_path}\n")
     log_file.write(f"Data path: {AD_DATASET_VAL}\n")
     # log_file.write(f"Data used for validation: {len(ds_lookup_val)}\n")
 
@@ -818,7 +810,7 @@ def main():
     log_file.write(f"STEPS_PER_EPOCH: {STEPS_PER_EPOCH}\n\n")
 
 
-    # log_file.write(f"EXPERIMENT_NOTE: {EXPERIMENT_NOTE}\n\n")
+    log_file.write(f"EXPERIMENT_NOTE: {EXPERIMENT_NOTE}\n\n")
     log_file.write("========================================\n\n")
     log_file.flush()
 
@@ -829,8 +821,9 @@ def main():
 
     epoch_losses = [] # added to track epoch loss
     iteration = 0 
+
+    # initializes a countrer for every task 
     batch_indices = {task_id: 0 for task_id in tensor_batches} # we need a separate index per task, since each task rotates through its own batches.
-    
     
     
     
@@ -925,19 +918,15 @@ def main():
         #     4: [],    # # losses for batches of task 4
         #     5: []     # # losses for batches of task 5 
         # }
-        
-
 
         
         for task_id in tensor_batches_val:                                        # Loop over all validation tasks
             for x_s, y_s, x_q, y_q, slr_tensor in tensor_batches_val[task_id]:    # Loop over all batches (scenarios) for this task 
 
-                # x_s and x_q ->     shape: (2, 1024, 1024, 1), dtype <dtype: 'float32'>
-                # y_s and y_q ->     shape: (2, 1024, 1024, 4), dtype <dtype: 'float32'>
-                # slr_tensor  ->     shape: (2, 1), dtype <dtype: 'float32'>
-
+        
+                # ---------------  ------- loss --------  --------------- 
                 # Run MAML fast adaption using support and query sets -> this gives back the query loss to this adapted model 
-                val_q_loss, _ = maml.fast(x_s, y_s, x_q, y_q, slr_tensor)
+                val_q_loss, _ = maml.fast_adapt(x_s, y_s, x_q, y_q, slr_tensor)
                 # note :maml.fast(...) returns two values: (query_loss, gradients) 
                 # But during validation, we only care about the loss (not updating weights), so we use '_' to ignore the gradients 
 
@@ -946,84 +935,139 @@ def main():
                 val_task_losses[task_id].append(val_loss)   
 
 
-                # ---------------  ---------------  --------------- 
                 # Steps we ll have to follow to get the metrics performance -> for each query element 
-                
-                # 1. x_input   -> shape: (1, 1024, 1024, 1)     => represented by x_q_one
+                # ---------------  ------- initial shape --------  ---------------
+                # x_s and x_q ->     shape: (2, 1024, 1024, 1), dtype <dtype: 'float32'>
+                # y_s and y_q ->     shape: (2, 1024, 1024, 4), dtype <dtype: 'float32'>
+                # slr_tensor  ->     shape: (2, 1), dtype <dtype: 'float32'>
+
+                # ---------------  ------- desired shapes  --------  ---------------
+                # from performance eval code
+
+                # STEP 1: From TF tensors to Numpy (for x, y, mask, and slr)
+                # STEP 2: Formating
+                #    x_input   -> shape: (1, 1024, 1024, 1)     => represented by x_q_one
                 #    y_true_2d -> shape: (1024, 1024)           => represented by y_true_q_one_2d
                 #    slr_input -> shape: (1,1)
                 #    mask_bool -> shape: (1024,1024) 
+    
+                # Note: q stands for query (cause we're using the query set elements for testing)
 
-                # note: q stands for query (cause we're using the query set elements for testing)
+                # ---------------  ------- x --------  ---------------
 
-                x_q_one   = x_q[0:1]            # shape: (1, 1024, 1024, 1) 
+                x_q_one       = x_q[0:1]            # shape: (1, 1024, 1024, 1) 
+                print (f"shape of x_q_one: {tf.shape(x_q_one)}\n")
+
+                x_q_one_numpy = x_q_one.numpy()     # from tf tensor to numpy array 
+                print (f"shape of x_q_one_numpy: {x_q_one_numpy.shape}\n")
+
+                # ---------------  ------- y --------  ---------------
 
                 ### for y since there are 4 challenge we have to un-normalize ### 
                 y_norm  = y_q [:, :, :, 0]     # normalized values 
-                mask    = y_q [:, :, :, 1]    
+                mask_q  = y_q [:, :, :, 1]     # shape: (2, 1024, 1024, 1)  
                 y_min   = y_q [:, :, :, 2]
                 y_max   = y_q [:, :, :, 3]
 
-                # unormalize to real values 
+
+                # un-normalize to real values 
                 y_true_q = y_norm * (y_max - y_min + 1e-8) + y_min       # shape: (2, 1024, 1024) 
+                print (f"shape of y_true_q: {tf.shape(y_true_q)}\n")
 
                 # take the first element 
-                y_true_q_one_2d = y_real [0]             # shape: (1024, 1024) 
-            
-                ## ### ## ## 
+                y_true_q_one_2d = y_true_q[0]             # shape: (1024, 1024) - 2d as 2 dimensions 
+                print (f"shape of y_true_q_one_2d: {tf.shape(y_true_q_one_2d)}\n") 
+
+                # convert to numpy
+                y_true_q_one_2d_numpy = y_true_q_one_2d.numpy()
+                print (f"shape of y_true_q_one_2d_numpy: {y_true_q_one_2d_numpy.shape}\n")
+                
+                # ---------------  ------- mask --------  ---------------
 
                 # take the first element along axis 0 and the *second* channel (index 1)
-                mask_bool = y_q [0, :, :, 1]   # shape: (1024, 1024)
+                mask_q_one = mask_q [0]   # shape: (1024, 1024)
+                print (f"shape of mask_q_one: {tf.shape(mask_q_one)}\n") 
 
-                # one of the channels has the mask
-                slr_input = slr_tensor[0:1]     # shape: (1,1) 
+                # convert to numpy
+                mask_q_one_numpy = mask_q_one.numpy()
+                print (f"shape of mask_q_one_numpy: {mask_q_one_numpy.shape}\n")
 
+                # for debugging 
+                print (f"sample values tf tensor:\n", mask_q_one[:5, :5])
+                print (f"sample values numpy array:\n", mask_q_one_numpy[:5, :5])
 
+                print ("dtype:", mask_q_one_numpy.dtype)
+                print ("min:", mask_q_one_numpy.min(), 
+                        "max:", mask_q_one_numpy.max(), 
+                        "unique:", np.unique(mask_q_one_numpy))
+
+                mask_bool_q = mask_q_one_numpy.astype(bool)
+                    
+                # ---------------  ------- slr --------  ---------------
+                # note: slr_tensor -> shape: (2, 1), dtype <dtype: 'float32'> 
+
+                slr_input = slr_tensor[0:1]             # shape: (1,1) 
+                print (f"shape of slr_input: {tf.shape(slr_input)}\n") 
+
+                slr_input_numpy = slr_input.numpy()
+                print (f"shape of slr_input_numpy: {slr_input_numpy.shape}\n")
+
+                # ---------------  ------- get predictions --------  ---------------
                 preds_q = model.predict({       # shape: (1, 1024, 1024, 1)
-                    "input_grid":x_q_one, 
-                    "slr_input":slr_input}, 
+                    "input_grid":x_q_one_numpy, 
+                    "slr_input":slr_input_numpy}, 
                     verbose=0)      
 
+                print (f"shape of preds_q: {preds_q.shape}\n") 
+
                 pred_grid_q = preds_q[0,:,:,0]                     # shape: (1024, 1024)
-            
+                print (f"shape of pred_grid_q: {tf.shape(pred_grid_q)}\n") 
+
                 # model prediction (already raw) 
                 y_pred_2d = pred_grid_q                  # shape: (1024, 1024)   
 
+                # ---------------  ------- focus on valid locations --------  ---------------
                 # We only want to compute MAE, RMSE, etc. on the valid locations, i.e., where mask_bool == True.
-                valid_t = y_true_q_one_2d[mask_bool]     # 1‑D vectors over inundation mask
-                valid_p = y_pred_2d[mask_bool]
                 # valid_t and valid_p are 1D arrays, each with N values (only the masked locations).
+                
+                valid_p = y_pred_2d[mask_bool_q]
+                print (f"shape of valid_p: {valid_p.shape}\n") 
+                
+                valid_t = y_true_q_one_2d_numpy[mask_bool_q]     # 1‑D vectors over inundation mask
+                print (f"shape of valid_t: {valid_t.shape}\n") 
 
                 region = 'AD' ## TO BE CHANGED so i can extract it direct from scenario instead of being hardcoded ... 
 
-                # ─── Sanity checks before computing metrics ─────────────────────────────────
+                # ---------------  ------- Sanity checks before computing metrics --------  ---------------
                 print(f"Region: {region}")
                 print(f"Valid True Min/Max: {valid_t.min() if valid_t.size else 'empty'} / {valid_t.max() if valid_t.size else 'empty'}")
                 print(f"Valid Pred Min/Max: {valid_p.min() if valid_p.size else 'empty'} / {valid_p.max() if valid_p.size else 'empty'}")
-                print(f"Valid count: {len(valid_t)}")  # number of valid pixels (where mask == True)
+                print(f"Valid count: {len(valid_t)}")  # number of valid pixels (where mask == True) 
+
+                
+
 
                 # NEXT TRY TO THINK WHERE To store the metrics  
                 # ... ### ALL STEPS LAYED DOWN IN GPT JUST FOLLOW THEM 
                 ## BEFORE -> LET S SEE THIS BASIC CODE WORKING
 
 
+                ## then put function similar to def update (dict) -> to fill in the metrics 
+
 
                 #### CONTINUE WITH THIS METHOD and if it does not WORK 
                 #      then I can try to get the predictions from the custom_loss() function 
-                #           (which already does all the masking stuff... and returns the loss ) BUT instead of ONLY returning the loss we return the predictions as well
-
+                #           (which already does all the masking stuff... and returns the loss ) BUT instead of ONLY returning the loss we return the predictions as well 
             
                 # Note:  In the MAML Performance Evaluation code -> 
                 #       there is no support or query as we are dealing with the test set as a whole
                 #       for us -> query element is the inference one
-            # ---------------  ---------------  --------------- 
+            # ---------------  ---------------  --------------- --------------- 
 
-
-            
             # done with all batches of task_id and move to the next task 
-            
             # gather the loss for each task group - CHECK TABLETTE FOR STEPS TO FOLLOW + rename the variables BETTER so they are more self explanatory 
             
+
 
         # done with all of the batches of all of the tasks
         # Compute the average query loss across all validation batches

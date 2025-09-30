@@ -1,0 +1,55 @@
+========================================
+============   DATA   ============
+====   TRAINING    ====
+====   VALIDATION  ====
+Data path: ./data/raw/AD_slr_0.5m/train/FSL_MAML_AD_train_ds_aug_split_1
+Data path: ./data/raw/AD_slr_0.5m/val/FSL_MAML_AD_val_ds_aug_split_1
+PATCH_SIZE: 1024
+META_BATCH_SIZE: 5
+SUPPORT_K: 2
+QUERY_K: 2
+MAX_PER_SET: 20
+
+============   MODEL   ============
+============   TRAINING   ============
+INNER_STEPS: 4
+INNER_LR: 0.0007
+OUTER_LR: 3e-05
+EPOCHS: 128
+STEPS_PER_EPOCH: 5
+
+EXPERIMENT_NOTE: Testing initial version of per task validation eval
+
+========================================
+
+Epoch 1 Step 1 Task 1 | q_loss: 3.8015
+Epoch 1 Step 1 Task 2 | q_loss: 5.0061
+Epoch 1 Step 1 Task 3 | q_loss: 0.8529
+Epoch 1 Step 1 Task 4 | q_loss: 0.4156
+Epoch 1 Step 1 Task 5 | q_loss: 1.6275
+[2025-09-17 18:27:21] Epoch 1 Step 1 | step_loss: 2.3407
+Epoch 1 Step 2 Task 1 | q_loss: 3.7993
+Epoch 1 Step 2 Task 2 | q_loss: 4.4447
+Epoch 1 Step 2 Task 3 | q_loss: 2.5999
+Epoch 1 Step 2 Task 4 | q_loss: 0.5668
+Epoch 1 Step 2 Task 5 | q_loss: 1.6296
+[2025-09-17 18:27:23] Epoch 1 Step 2 | step_loss: 2.6081
+Epoch 1 Step 3 Task 1 | q_loss: 3.7938
+Epoch 1 Step 3 Task 2 | q_loss: 5.0107
+Epoch 1 Step 3 Task 3 | q_loss: 1.5640
+Epoch 1 Step 3 Task 4 | q_loss: 0.3727
+Epoch 1 Step 3 Task 5 | q_loss: 1.3425
+[2025-09-17 18:27:26] Epoch 1 Step 3 | step_loss: 2.4168
+Epoch 1 Step 4 Task 1 | q_loss: 3.7907
+Epoch 1 Step 4 Task 2 | q_loss: 4.4444
+Epoch 1 Step 4 Task 3 | q_loss: 2.1498
+Epoch 1 Step 4 Task 4 | q_loss: 0.1922
+Epoch 1 Step 4 Task 5 | q_loss: 1.3428
+[2025-09-17 18:27:29] Epoch 1 Step 4 | step_loss: 2.3840
+Epoch 1 Step 5 Task 1 | q_loss: 3.8018
+Epoch 1 Step 5 Task 2 | q_loss: 5.0017
+Epoch 1 Step 5 Task 3 | q_loss: 1.3804
+Epoch 1 Step 5 Task 4 | q_loss: 0.5625
+Epoch 1 Step 5 Task 5 | q_loss: 1.3426
+[2025-09-17 18:27:31] Epoch 1 Step 5 | step_loss: 2.4178
+Epoch 1, Epoch Loss: 2.4335
